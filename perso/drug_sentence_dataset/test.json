@@ -13,7 +13,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/13625ce258fc7d722ebd.wav", "text": "Antécédents de traitement par dutastéride une capsule de 0,5 milligrammes pendant 2 ans.", "duration": 6.3}
 {"audio_filepath": "./perso/drug_sentence_dataset/1a11e443207c23cd0cc2.wav", "text": "Mise en place d'un traitement par létrozole un comprimé de 2,5 milligrammes en hormonothérapie postopératoire.", "duration": 8.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/c0c5a7991ccc30071447.wav", "text": "Arrêt progressif du benzylthiouracile un comprimé de 25 milligrammes après 18 mois de traitement devant l'euthyroïdie stable.", "duration": 9.7}
-{"audio_filepath": "./perso/drug_sentence_dataset/438039de3f41a2836118.wav", "text": "La patiente signale des cauchemars avec la dose actuelle, on diminue à un comprimé de mélatonine de un milligramme.", "duration": 7.2}
+{"audio_filepath": "./perso/drug_sentence_dataset/438039de3f41a2836118.wav", "text": "La patiente signale des cauchemars avec la dose actuelle, on diminue à un comprimé de mélatonine de 1 milligramme.", "duration": 7.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/463ad69eb2f203c226db.wav", "text": "Poursuite du traitement par rélugolix un comprimé de 120 milligrammes dans le cadre de la prise en charge au long cours.", "duration": 8.9}
 {"audio_filepath": "./perso/drug_sentence_dataset/3fea9cce5ba6774d3712.wav", "text": "On associe la norfloxacine en collyre 100 millilitres de 300 milligrammes au traitement antibiotique oral.", "duration": 8.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/72467863d02d396dfdc5.wav", "text": "On envisage d'introduire de l'alanine dans le protocole de prise en charge nutritionnelle du patient.", "duration": 7.0}
@@ -40,7 +40,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/5eaec7f219b33c678347.wav", "text": "La patiente prend de la dydrogestérone un comprimé de 10 milligrammes 2 fois par jour pour son endométriose.", "duration": 7.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/0e9ec7cb29fae0cf24a3.wav", "text": "Contrôle de la charge virale sous doravirine un comprimé de 100 milligrammes prévu dans 3 mois.", "duration": 7.5}
 {"audio_filepath": "./perso/drug_sentence_dataset/5972fd46e8d1c7ea8890.wav", "text": "On envisage l'arrêt de l'altizide un comprimé de 15 milligrammes si la tension reste stable.", "duration": 6.8}
-{"audio_filepath": "./perso/drug_sentence_dataset/bfe8327ca027c37a7be7.wav", "text": "Je prescris du dexpanthénol un comprimé de 100 milligrammes pendant un mois pour traiter la sécheresse cutanée sévère.", "duration": 8.6}
+{"audio_filepath": "./perso/drug_sentence_dataset/bfe8327ca027c37a7be7.wav", "text": "Je prescris du dexpanthénol un comprimé de 100 milligrammes pendant 1 mois pour traiter la sécheresse cutanée sévère.", "duration": 8.6}
 {"audio_filepath": "./perso/drug_sentence_dataset/cab0b6bde818beb5f2bf.wav", "text": "Bonne réponse thérapeutique avec la molsidomine un comprimé de 4 milligrammes, diminution des crises angineuses.", "duration": 8.1}
 {"audio_filepath": "./perso/drug_sentence_dataset/5f7a03ff2ef2465956f9.wav", "text": "Réduction de l'orlistat à une gélule de 120 milligrammes 2 fois par jour en raison d'effets secondaires gastro-intestinaux importants.", "duration": 11.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/66a43817f91d672eb14e.wav", "text": "Renouvellement pour 3 mois du trandolapril une gélule de 0,5 milligrammes quotidien.", "duration": 6.8}
@@ -60,10 +60,10 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/4aca9face1154f727c0b.wav", "text": "Renouvellement de l'ordonnance d'abrocitinib un comprimé de 200 milligrammes pour 3 mois supplémentaires.", "duration": 7.5}
 {"audio_filepath": "./perso/drug_sentence_dataset/8af04897904497ac291d.wav", "text": "Renouvellement de l'ordonnance de sitagliptine un comprimé de 100 milligrammes le matin pour 3 mois.", "duration": 7.9}
 {"audio_filepath": "./perso/drug_sentence_dataset/80e46c559f5240e75a04.wav", "text": "Renouvellement de l'ordonnance d'ambrisentan un comprimé de 5 milligrammes pour 3 mois.", "duration": 6.3}
-{"audio_filepath": "./perso/drug_sentence_dataset/bb738d8fb9fa7701e86d.wav", "text": "Initiation du traitement par crizotinib une gélule de 200 milligrammes 2 fois par jour pour un cancer bronchique ALK positif.", "duration": 9.7}
+{"audio_filepath": "./perso/drug_sentence_dataset/bb738d8fb9fa7701e86d.wav", "text": "Initiation du traitement par crizotinib une gélule de 200 milligrammes 2 fois par jour pour un cancer bronchique ALK-positif.", "duration": 9.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/331337e9fdf3429bae05.wav", "text": "Réduction de dose du baricitinib à un comprimé de 2 milligrammes par jour en raison d'une insuffisance rénale modérée.", "duration": 7.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/10c1e9e36a40615dad87.wav", "text": "Le patient prend actuellement du piroxicam une gélule de 10 milligrammes le matin depuis 2 semaines.", "duration": 8.0}
-{"audio_filepath": "./perso/drug_sentence_dataset/2c6552ac550a6eaba031.wav", "text": "Mise sous leuprorÉline dans le cadre du cancer de la prostate métastatique hormono-sensible.", "duration": 7.6}
+{"audio_filepath": "./perso/drug_sentence_dataset/2c6552ac550a6eaba031.wav", "text": "Mise sous leuprorÉline dans le cadre du cancer de la prostate métastatique hormonosensible.", "duration": 7.6}
 {"audio_filepath": "./perso/drug_sentence_dataset/30d41e1a00bf9f6b49ae.wav", "text": "Le patient rapporte une fatigue importante sous pindolol un comprimé de 15 milligrammes, on envisage une réduction de dose.", "duration": 9.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/0aab19b7d50bacfb5ed3.wav", "text": "Le patient prend de l'avanafil un comprimé de 100 milligrammes de manière occasionnelle avec bonne réponse thérapeutique.", "duration": 7.4}
 {"audio_filepath": "./perso/drug_sentence_dataset/aba02dd6263d069b69b6.wav", "text": "Augmentation de la dose de clofazimine à une capsule de 100 milligrammes par jour selon le protocole de polychimiothérapie.", "duration": 8.7}
@@ -81,7 +81,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/13fc8b22d872349685c3.wav", "text": "Je maintiens la lamivudine un comprimé de 150 milligrammes 2 fois par jour en association avec le zidovudine.", "duration": 9.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/7f7ed2284a53645ecb60.wav", "text": "On maintient la prégabaline une gélule de 100 milligrammes 3 fois par jour.", "duration": 5.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/8586f81c00be17846f97.wav", "text": "Poursuite du traitement par PF-07321332 un comprimé de 150 milligrammes jusqu'à complétion des 5 jours.", "duration": 10.0}
-{"audio_filepath": "./perso/drug_sentence_dataset/a8ec5b59b5c9d4676df9.wav", "text": "Initiation du traitement par sÉlinexor en association avec dexaméthasone pour le myélome multiple réfractaire.", "duration": 9.2}
+{"audio_filepath": "./perso/drug_sentence_dataset/a8ec5b59b5c9d4676df9.wav", "text": "Initiation du traitement par sÉlinexor en association avec dexamethasone pour le myélome multiple réfractaire.", "duration": 9.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/b7f163fb2638b5acf2a3.wav", "text": "Adaptation posologique de l'hydrocortisone un comprimé de 10 milligrammes à prendre au réveil à jeun.", "duration": 7.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/19d9d53e17983dcac2c5.wav", "text": "Contrôle du bilan hépatique avant renouvellement du prétomanid un comprimé de 200 milligrammes.", "duration": 7.3}
 {"audio_filepath": "./perso/drug_sentence_dataset/7507e75511058b438a40.wav", "text": "On débute l'hydroxycarbamide une gélule de 500 milligrammes 2 fois par jour pour la drépanocytose.", "duration": 7.5}
@@ -109,13 +109,13 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/dfa923e17f8cd1229006.wav", "text": "Poursuite du gliclazide un comprimé de 80 milligrammes le matin, hémoglobine glyquée satisfaisante à sept %.", "duration": 8.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/e7dc1c820265ca9e69da.wav", "text": "Je prescris de la phénytoïne un comprimé de 100 milligrammes 3 fois par jour pour le traitement de l'épilepsie.", "duration": 7.9}
 {"audio_filepath": "./perso/drug_sentence_dataset/c04463814f987c054b89.wav", "text": "Le patient tolère bien l'aprépitant dans le cadre de son protocole antiémétique.", "duration": 5.2}
-{"audio_filepath": "./perso/drug_sentence_dataset/c194f10a8b08bc37afa1.wav", "text": "Mise en place d'un traitement associant allopurinol et colchicine un comprimé de un milligramme pour couvrir la phase initiale.", "duration": 10.1}
+{"audio_filepath": "./perso/drug_sentence_dataset/c194f10a8b08bc37afa1.wav", "text": "Mise en place d'un traitement associant allopurinol et colchicine un comprimé de 1 milligramme pour couvrir la phase initiale.", "duration": 10.1}
 {"audio_filepath": "./perso/drug_sentence_dataset/6f55a99f1f3e20c1b943.wav", "text": "Je recommande de prendre l'alfa-amylase un comprimé de trois mille U.CEIP juste avant ou pendant le repas principal.", "duration": 10.1}
 {"audio_filepath": "./perso/drug_sentence_dataset/c604b406314b9b186bb4.wav", "text": "Je mets le patient sous ticagrélor un comprimé de 90 milligrammes 2 fois par jour suite à son syndrome coronarien aigu.", "duration": 11.4}
 {"audio_filepath": "./perso/drug_sentence_dataset/0bb62a320f28c92e7cf8.wav", "text": "Poursuite du protocole avec encorafénib une gélule de 75 milligrammes matin midi et soir, bonne réponse tumorale au scanner.", "duration": 9.9}
 {"audio_filepath": "./perso/drug_sentence_dataset/71bd88b1ab935cccf26b.wav", "text": "Traitement de fond bien toléré, poursuite de la théophylline une gélule de 300 milligrammes 2 fois par jour.", "duration": 8.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/8d22e8f59fc8f2506533.wav", "text": "Maintien de l'aripiprazole un comprimé de 10 milligrammes quotidien associé à un suivi psychiatrique mensuel.", "duration": 7.1}
-{"audio_filepath": "./perso/drug_sentence_dataset/ed420ec8d436f33f9368.wav", "text": "Renouvellement du naproxène un comprimé de 500 milligrammes 2 fois par jour pendant encore un mois.", "duration": 8.6}
+{"audio_filepath": "./perso/drug_sentence_dataset/ed420ec8d436f33f9368.wav", "text": "Renouvellement du naproxène un comprimé de 500 milligrammes 2 fois par jour pendant encore 1 mois.", "duration": 8.6}
 {"audio_filepath": "./perso/drug_sentence_dataset/3067b4cc171d73852a64.wav", "text": "Le patient prend du clotiazépam un comprimé de 10 milligrammes avant le coucher depuis 2 semaines.", "duration": 6.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/103433ffe0e014701bc0.wav", "text": "Pas d'effets secondaires signalés avec l'ézétimibe une gélule de 10 milligrammes, surveillance hépatique dans 3 mois.", "duration": 8.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/36785801142c93451f41.wav", "text": "Le patient prend du pyrazinamide un comprimé de 500 milligrammes le matin associé à la rifampicine et l'isoniazide.", "duration": 8.3}
@@ -140,7 +140,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/f19d13fe1b43c64434af.wav", "text": "Le patient reçoit du pibrentasvir un comprimé de 40 milligrammes 3 fois par jour dans le cadre du traitement de son hépatite C chronique.", "duration": 9.6}
 {"audio_filepath": "./perso/drug_sentence_dataset/e24a9586994bf4a4040d.wav", "text": "Reprise progressive du brigatinib un comprimé de 30 milligrammes après résolution des effets secondaires digestifs.", "duration": 7.5}
 {"audio_filepath": "./perso/drug_sentence_dataset/209686e7f838104f795f.wav", "text": "On poursuit l'élexacaftor un comprimé de 100 milligrammes tous les matins dans le cadre du traitement de fond.", "duration": 7.8}
-{"audio_filepath": "./perso/drug_sentence_dataset/f744196de246209a0549.wav", "text": "On poursuit le bimatoprost collyre un millilitre de solution de 0,1 milligramme en application quotidienne le soir.", "duration": 9.8}
+{"audio_filepath": "./perso/drug_sentence_dataset/f744196de246209a0549.wav", "text": "On poursuit le bimatoprost collyre 1 millilitre de solution de 0,1 milligramme en application quotidienne le soir.", "duration": 9.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/f1ed2e0145e495bb0f7e.wav", "text": "Je prescris de la cimétidine un comprimé de 200 milligrammes 4 fois par jour pour traiter l'ulcère gastrique.", "duration": 8.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/dd716eebdd82ce59987e.wav", "text": "Initiation du traitement par fénofibrate une gélule de 67 milligrammes le matin avec surveillance du bilan lipidique dans 3 mois.", "duration": 9.4}
 {"audio_filepath": "./perso/drug_sentence_dataset/e31b868412f998fd4026.wav", "text": "On maintient pour l'instant la bendrofluméthiazide un comprimé de 2,50 milligrammes sans augmentation de posologie.", "duration": 9.9}
@@ -154,7 +154,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/d18b9845876e0e9090ac.wav", "text": "On continue le nicotinamide à la même posologie pour encore 3 mois.", "duration": 5.0}
 {"audio_filepath": "./perso/drug_sentence_dataset/9eac7f1d0267f4a565e3.wav", "text": "Je prescris de la progestérone un ovule de 400 milligrammes par voie vaginale au coucher.", "duration": 7.5}
 {"audio_filepath": "./perso/drug_sentence_dataset/7be5f80716d89a2ec0ca.wav", "text": "Renouvellement de l'ordonnance de ténoxicam un comprimé de 20 milligrammes pour 3 mois supplémentaires.", "duration": 7.9}
-{"audio_filepath": "./perso/drug_sentence_dataset/850d24422c79002477bb.wav", "text": "On observe une stabilisation des poussées depuis l'instauration du tériflunomide un comprimé de 14 milligrammes il y a un an.", "duration": 9.8}
+{"audio_filepath": "./perso/drug_sentence_dataset/850d24422c79002477bb.wav", "text": "On observe une stabilisation des poussées depuis l'instauration du tériflunomide un comprimé de 14 milligrammes il y a 1 an.", "duration": 9.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/e464240df656ea5375f5.wav", "text": "Je prescris du lacosamide un comprimé de 100 milligrammes 2 fois par jour pour les crises d'épilepsie partielles.", "duration": 7.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/1386b447650dfa948426.wav", "text": "Prescription d'ornidazole un comprimé de 500 milligrammes une fois par jour au coucher pendant 7 jours.", "duration": 8.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/683f5efb445ab104aacf.wav", "text": "Je prescris de la loratadine un comprimé de 10 milligrammes une fois par jour pour les symptômes allergiques.", "duration": 7.6}
@@ -162,7 +162,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/9713d0cca526874940f6.wav", "text": "Je vérifie la posologie de nimodipine un comprimé de 30 milligrammes, soit 180 milligrammes par jour au total.", "duration": 8.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/adc7606d68d991c9b631.wav", "text": "La patiente signale des céphalées intermittentes sous norgestimate un comprimé de 250 microgrammes, on surveille l'évolution.", "duration": 9.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/8107f90ebf99394bca19.wav", "text": "On poursuit l'artéméther un comprimé de 20 milligrammes matin midi et soir selon le protocole antipaludique.", "duration": 8.8}
-{"audio_filepath": "./perso/drug_sentence_dataset/eaebf71a70c27711a15c.wav", "text": "Arrêt progressif de la naftazone un comprimé de 30 milligrammes sur une semaine.", "duration": 7.0}
+{"audio_filepath": "./perso/drug_sentence_dataset/eaebf71a70c27711a15c.wav", "text": "Arrêt progressif de la naftazone un comprimé de 30 milligrammes sur 1 semaine.", "duration": 7.0}
 {"audio_filepath": "./perso/drug_sentence_dataset/5d1f7b4dd47c591285a2.wav", "text": "Renouvellement du traitement par praziquantel un comprimé de 600 milligrammes selon le même schéma posologique qu'au dernier séjour.", "duration": 9.3}
 {"audio_filepath": "./perso/drug_sentence_dataset/1598da450ec6ca23c824.wav", "text": "Renouvellement de l'ordonnance de prastérone une ovule de 6,5 milligrammes pour 3 mois.", "duration": 7.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/c3757e85f67e8289c8b7.wav", "text": "Le patient est sous nabumétone depuis 2 mois pour des douleurs articulaires chroniques.", "duration": 5.3}
@@ -178,7 +178,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/60e897758ef0f3e33dd5.wav", "text": "Je prescris de l'étamsylate un comprimé de 500 milligrammes 3 fois par jour pour les saignements menstruels abondants.", "duration": 8.6}
 {"audio_filepath": "./perso/drug_sentence_dataset/2ee15a2fbea07f95655a.wav", "text": "Prescription renouvelée de mitotane un comprimé de 500 milligrammes 3 fois par jour avec surveillance endocrinienne rapprochée.", "duration": 10.1}
 {"audio_filepath": "./perso/drug_sentence_dataset/697a8207a800c874c466.wav", "text": "On continue le colÉcalcifÉrol une capsule de 2,5 milligrammes par jour, contrôle de la vitamine D dans 3 mois.", "duration": 9.6}
-{"audio_filepath": "./perso/drug_sentence_dataset/55e293e49f90570683d7.wav", "text": "Le patient prend de l'acétylleucine un comprimé de 500 milligrammes matin midi et soir depuis une semaine.", "duration": 10.2}
+{"audio_filepath": "./perso/drug_sentence_dataset/55e293e49f90570683d7.wav", "text": "Le patient prend de l'acétylleucine un comprimé de 500 milligrammes matin midi et soir depuis 1 semaine.", "duration": 10.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/78ea6f2888992c50c836.wav", "text": "Le patient continue l'abacavir un comprimé de 600 milligrammes le matin associé à la lamivudine.", "duration": 8.0}
 {"audio_filepath": "./perso/drug_sentence_dataset/e7793c17d0cc01157a34.wav", "text": "Initiation prudente avec lévodopa un comprimé de 50 milligrammes matin et soir chez ce patient âgé.", "duration": 9.4}
 {"audio_filepath": "./perso/drug_sentence_dataset/88395f108966fae73f00.wav", "text": "Surveillance cutanée rapprochée sous vémurafénib un comprimé de 240 milligrammes en raison du risque de carcinomes cutanés.", "duration": 9.2}
