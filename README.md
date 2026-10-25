@@ -181,6 +181,8 @@ The `Co-authored-by` trailers in the original unsquashed history recorded which 
 change; that detail is lost in the squash, so it is stated here instead. The measurements,
 diagnoses and design decisions were reviewed and run by me.
 
+Thanks to [Zagitta/gpu-unlock](https://github.com/Zagitta/gpu-unlock), which substantially improved my GPU performance.
+
 ---
 
 *Upstream NeMo's own README is available in the
