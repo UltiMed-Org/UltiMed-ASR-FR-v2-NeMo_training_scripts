@@ -323,14 +323,14 @@ model:
       # directory; perso/ultimed_data_ignore-backups is a symlink to the
       # dataset root on the SSD, so nothing user-specific is committed.
       # 24 kHz FLAC, resampled to 16 kHz on the fly by the dataloader.
-      - "./perso/ultimed_data_ignore-backups/NeMO_files/train.jsonl"
+      - "./perso/ultimed_data_ignore-backups/v2/NeMO_files/train.jsonl"
       # drugs upsampling (see the mix note above): 3 extra passes over the
       # drugs rows of train.jsonl. Change the count here, nothing else
       # depends on it (the encoder cache is keyed per audio file, so repeated
       # rows reuse the same cache entries).
-      - "./perso/ultimed_data_ignore-backups/NeMO_files/train.drugs.jsonl"
-      - "./perso/ultimed_data_ignore-backups/NeMO_files/train.drugs.jsonl"
-      - "./perso/ultimed_data_ignore-backups/NeMO_files/train.drugs.jsonl"
+      - "./perso/ultimed_data_ignore-backups/v2/NeMO_files/train.drugs.jsonl"
+      - "./perso/ultimed_data_ignore-backups/v2/NeMO_files/train.drugs.jsonl"
+      - "./perso/ultimed_data_ignore-backups/v2/NeMO_files/train.drugs.jsonl"
       # sentences containing drugs and dosages read out loud by TTS (4100 samples)
       - "./perso/drug_sentence_dataset/train.json"
       # DIY medical dataset
@@ -587,7 +587,7 @@ model:
       # Never point these at <source>/val.jsonl: manifests combined before 2026-09-27 hold
       # an independent per-source split that overlaps train.jsonl (the combine now syncs them).
       - name: ultimed_dictionary
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/NeMO_files/val.dictionary.down-600.jsonl"
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.dictionary.down-600.jsonl"
         sample_rate: 16000
         batch_size: 4  # clips reach the 45 s cap; keep the loss lattice bounded
         shuffle: false
@@ -597,7 +597,7 @@ model:
         prefetch_factor: 2
 
       - name: ultimed_parhaf
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/NeMO_files/val.parhaf.down-300.jsonl"
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.parhaf.down-300.jsonl"
         sample_rate: 16000
         batch_size: 2  # long-form hospital reports, many near 45 s
         shuffle: false
@@ -607,7 +607,7 @@ model:
         prefetch_factor: 2
 
       - name: ultimed_drugs
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/NeMO_files/val.drugs.down-300.jsonl"
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.drugs.down-300.jsonl"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
@@ -617,7 +617,7 @@ model:
         prefetch_factor: 2
 
       - name: ultimed_acronyms
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/NeMO_files/val.acronyms.down-150.jsonl"
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.acronyms.down-150.jsonl"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
@@ -629,7 +629,7 @@ model:
       # PARROT: eval-only subset (CC BY-NC-SA), never trained on. Sliced
       # from ITS TEST SPLIT and used as an out-of-domain radiology monitor.
       - name: ultimed_parrot
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/NeMO_files/PARROT/test.down-200.jsonl"
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/PARROT/test.down-200.jsonl"
         sample_rate: 16000
         batch_size: 2  # long-form radiology reports
         shuffle: false
@@ -721,7 +721,7 @@ model:
       # Full UltiMed test split: 57,668 clips / ~310 h across all sources.
       # Far too big to run during training; for one-shot manual eval only.
       - name: ultimed_full
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/NeMO_files/test.jsonl"
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/test.jsonl"
         sample_rate: 16000
         batch_size: 4
         shuffle: false
@@ -732,7 +732,7 @@ model:
 
       # Full PARROT test split (eval-only subset, real anonymised radiology)
       - name: ultimed_parrot_full
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/NeMO_files/PARROT/test.jsonl"
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/PARROT/test.jsonl"
         sample_rate: 16000
         batch_size: 2
         shuffle: false
@@ -1556,10 +1556,33 @@ exp_manager:
   #        drug_sentence / oli numbers are NOT comparable with 1.6.0 and
   #        earlier (different references: re-scoring 1.6.0 step 7000 gives
   #        drug_sentence 12.9 -> 5.7, oli 3.9 -> 14.0).
+  # 2.0.0  first run on the UltiMed v2 corpus, which is a different dataset,
+  #        not a relabelling: the audio was regenerated with NINE Voxtral
+  #        TTS voices (fr_female, fr_male and seven hybrids) instead of one,
+  #        485,953 train clips / 2,719.4 h, and every clip carries a `voice`
+  #        key. Only the manifest paths and this version string move here;
+  #        the recipe is 1.7.0's, so a gain is attributable to the data.
+  #        Two things the v2 numbers change and nothing in this file yet
+  #        reflects (see the comments at those keys): the mean batch is
+  #        ~6.2 clips / ~120 audio-s instead of ~7.7 / ~138 because the
+  #        hybrid voices are slower, so accumulate_grad_batches 8 now buys a
+  #        ~13% smaller optimizer step and 20,000 steps is ~1.7 epochs
+  #        rather than ~1.97; and max_duration 38.0 now drops 46% of
+  #        PARHAF's hours (304.1 -> 164.4) against 31% in v1, which is the
+  #        only long-form signal in the mix.
+  #        NOT launchable as written: the v2 slices this config points at
+  #        (val.*.down-N, test.*.down-N, PARROT/test.down-200) and the 4x
+  #        upsample train.drugs.jsonl do not exist yet. Build them with
+  #        `perso/build_ultimed_val_slices.py --nemo-files-dir
+  #        <ssd>/audio_datasets/v2/NeMO_files` AFTER the QC repair round
+  #        settles the audio, since a repaired clip changes its duration.
   #
   # This is also the run directory name, so a new value starts a clean run and
-  # leaves the previous one resumable.
-  version: "1.7.0"
+  # leaves the previous one resumable. 1.7.0's run directory holds a finished
+  # v1 run (5 checkpoints and a step=14255 -last.ckpt), so leaving this at
+  # 1.7.0 with resume_if_exists would resume THAT run at 71% of its cosine
+  # schedule and compare new v2 WER against v1's save_top_k scores.
+  version: "2.0.0"
 
   # Only save the best model based on validation CER
   create_checkpoint_callback: true
