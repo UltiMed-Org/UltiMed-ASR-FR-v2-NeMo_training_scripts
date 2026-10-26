@@ -1717,16 +1717,33 @@ exp_manager:
   #        not a relabelling: the audio was regenerated with NINE Voxtral
   #        TTS voices (fr_female, fr_male and seven hybrids) instead of one,
   #        485,953 train clips / 2,719.4 h, and every clip carries a `voice`
-  #        key. Only the manifest paths and this version string move here;
-  #        the recipe is 1.7.0's, so a gain is attributable to the data.
+  #        key. Four recipe changes ride along, each a consequence of the
+  #        nine voices rather than an independent experiment, so a gain is
+  #        still mostly attributable to the data:
+  #        (1) spec_augment time_masks 5 -> 3, because nine voices already
+  #            supply the speaker variation the extra masks stood in for on
+  #            a single-voice corpus;
+  #        (2) the validation sets are cost-batched too (validation_ds.
+  #            cost_batching), so one long PARHAF clip no longer sets the
+  #            VRAM peak for a whole fixed-size validation batch;
+  #        (3) nine per-voice validation sets (val.voice.<v>.down-75), 24
+  #            sets in all, observability only: excluded from macro_metrics,
+  #            and they exist because the pooled QC flag rate spans 14x
+  #            across the voices (fr_female 0.300% to h_itf_def 4.260%), so
+  #            one voice can rot without moving a pooled WER;
+  #        (4) max_duration: TODO, still 38.0 below. The cost sampler emits
+  #            an oversized clip alone, so a longer cap costs nothing on the
+  #            other batch shapes; what it costs on a lone clip is measured
+  #            with `perso/oom_margin_check.sh` (LONE mode, NEMO_MEM_PROBE)
+  #            and the cap follows that measurement.
   #        Two things the v2 numbers change and nothing in this file yet
   #        reflects (see the comments at those keys): the mean batch is
   #        ~6.2 clips / ~120 audio-s instead of ~7.7 / ~138 because the
   #        hybrid voices are slower, so accumulate_grad_batches 8 now buys a
   #        ~13% smaller optimizer step and 20,000 steps is ~1.7 epochs
-  #        rather than ~1.97; and max_duration 38.0 now drops 46% of
-  #        PARHAF's hours (304.1 -> 164.4) against 31% in v1, which is the
-  #        only long-form signal in the mix.
+  #        rather than ~1.97; and max_duration 38.0 drops 46% of PARHAF's
+  #        hours (404.7 -> 219.8 over the whole release) against 31% in v1,
+  #        which is the only long-form signal in the mix.
   #        NOT launchable as written: the v2 slices this config points at
   #        (val.*.down-N, test.*.down-N, PARROT/test.down-200) and the 4x
   #        upsample train.drugs.jsonl do not exist yet. Build them with
