@@ -20,7 +20,15 @@
 # Re-run this after changing max_duration, batch_size, cost_batching.budget or
 # joint.fused_batch_size.
 #
+# Raising the cap alone proves nothing under cost batching, because the longest
+# clip the sampler will ever put in a batch by itself is sqrt(budget/10), not
+# max_duration: at budget 15000 that is 38.7 s, so `oom_margin_check.sh 50`
+# would still only test 38.7 s clips. Raise BUDGET with it. For a lone clip of
+# D seconds the budget has to be at least 10*D^2 (4*D^2 + 6*D^2), i.e. 20250 at
+# 45 s, 25000 at 50 s, 36000 at 60 s.
+#
 # Usage:  NEMO_EXP_DIR=/tmp/oom_check ./perso/oom_margin_check.sh [cap] [batch]
+#         NEMO_EXP_DIR=/tmp/oom_check BUDGET=25000 ./perso/oom_margin_check.sh 50
 # Defaults come from the config itself.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -33,17 +41,23 @@ PY="${PY:-.venv/bin/python}"
 CAP="${1:-$($PY -c 'from omegaconf import OmegaConf; print(int(OmegaConf.load("perso/training_config.yaml").model.train_ds.max_duration))')}"
 BS="${2:-$($PY -c 'from omegaconf import OmegaConf; print(OmegaConf.load("perso/training_config.yaml").model.train_ds.batch_size)')}"
 
-SRC="./perso/ultimed_data_ignore-backups/NeMO_files/train.jsonl"
+BUDGET="${BUDGET:-$($PY -c 'from omegaconf import OmegaConf; c=OmegaConf.load("perso/training_config.yaml").model.train_ds.get("cost_batching",None); print(c.get("budget",16500) if c else 0)')}"
+
+# From the config, not hardcoded: this used to name the v1 release and kept
+# naming it after the config moved to v2, which silently checked the wrong
+# corpus. The first train manifest is the full split (the others are upsampled
+# subsets of it).
+SRC="$($PY -c 'from omegaconf import OmegaConf; print(OmegaConf.load("perso/training_config.yaml").model.train_ds.manifest_filepath[0])')"
 WORST="$(mktemp -t worst_XXXX.jsonl)"
 LOG="$(mktemp -t oom_check_XXXX.log)"
 VLOG="$(mktemp -t oom_check_XXXX.vram)"
 trap 'rm -f "$WORST" "$VLOG"' EXIT
 
-"$PY" - "$SRC" "$WORST" "$CAP" <<'EOF'
+"$PY" - "$SRC" "$WORST" "$CAP" "$BUDGET" <<'EOF'
 import json, os, sys
 from omegaconf import OmegaConf
 
-src, out, cap = sys.argv[1], sys.argv[2], float(sys.argv[3])
+src, out, cap, budget_arg = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4])
 cost_cfg = OmegaConf.load("perso/training_config.yaml").model.train_ds.get("cost_batching", None)
 cost_on = bool(cost_cfg) and bool(cost_cfg.get("enabled", False))
 
@@ -51,7 +65,7 @@ if cost_on:
     # Duration at which a batch of n clips exactly reaches the budget, for the
     # batch sizes the sampler can actually produce. Each is a different corner
     # of the same frontier: same cost, very different shape.
-    budget = float(cost_cfg.get("budget", 16500))
+    budget = budget_arg or float(cost_cfg.get("budget", 16500))
     n_max = int(cost_cfg.get("max_batch_size", 16))
     sizes = [n for n in (1, 2, 4, 8, 16) if n <= n_max]
     targets = sorted({round(min(cap, (budget / (4 * n + 6)) ** 0.5), 1) for n in sizes}, reverse=True)
@@ -105,6 +119,7 @@ SAMPLER=$!
   "model.train_ds.manifest_filepath=[\"$WORST\"]" \
   "model.train_ds.max_duration=${CAP}.0" \
   "model.train_ds.batch_size=${BS}" \
+  "model.train_ds.cost_batching.budget=${BUDGET}" \
   trainer.max_epochs=1 \
   trainer.val_check_interval=1.0 \
   +trainer.limit_val_batches=0.0 \
@@ -119,7 +134,7 @@ kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null
 PEAK=$(sort -n "$VLOG" | tail -1)
 
 if [ "$CODE" -eq 0 ]; then
-  grep -m1 -o "Cost batching on:.*" "$LOG" | sed 's/^/[oom-check] /'
+  grep -m1 -o "Cost batching on for train:.*" "$LOG" | sed 's/^/[oom-check] /'
   echo "[oom-check] PASS  peak ${PEAK}/${TOTAL} MiB  (margin $((TOTAL-PEAK)) MiB)"
   echo "[oom-check] under ~1000 MiB of margin is uncomfortably thin for a multi-day run"
 elif grep -q "OutOfMemoryError" "$LOG"; then
