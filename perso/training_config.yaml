@@ -666,6 +666,119 @@ model:
         persistent_workers: false
         pin_memory: true
         prefetch_factor: 2
+
+      # --- per-voice UltiMed monitors (v2 is spoken by nine TTS voices) ---
+      # One slice per voice, 75 clips each with the SAME fixed category mix
+      # (40 dictionary / 25 parhaf / 10 drugs), built by
+      # perso/build_ultimed_val_slices.py (VOICE_QUOTAS, which documents the
+      # mix and the cost). They answer a question the per-source sets cannot:
+      # every source is spoken by all nine voices, so a voice the model learns
+      # worse than the others averages away there. The QC flag rates make that
+      # a real risk, spanning 14x from fr_female at 0.30% to h_itf_def at
+      # 4.26%, with a different worst voice per source (on PARHAF it is
+      # h_frf_ptm at 19.9%).
+      #
+      # Observability only, deliberately NOT in macro_metrics: these clips
+      # come from the same val split as the per-source slices, so adding them
+      # to the checkpoint monitor would weigh the same audio twice. Read them
+      # as a spread between the nine curves, and remember each is only ~4.4k
+      # reference words: a 2-point gap is signal, a 0.5-point one is not.
+      #
+      # Cost: ~4.3 h of audio for the nine, about 2 min a validation round on
+      # top of the 4.5 min the other sets take.
+      # What to do if one voice is clearly worse: it is a dataset problem, not
+      # a training one (the TTS take was bad), so redraw that voice's flagged
+      # clips in the QC phase rather than reweighting the loss here.
+
+      - name: voice_fr_female
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.fr_female.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: voice_fr_male
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.fr_male.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: voice_h_frf_esm
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frf_esm.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: voice_h_frf_itm
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frf_itm.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: voice_h_frf_ptm
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frf_ptm.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: voice_h_frm_nlf
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frm_nlf.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: voice_h_frm_ptf
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frm_ptf.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: voice_h_itf_arm
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_itf_arm.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: voice_h_itf_def
+        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_itf_def.down-75.jsonl"
+        sample_rate: 16000
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
       # --------------------------------------------------------------------
 
       - name: fleurs_de
@@ -1313,6 +1426,11 @@ trainer:
   # A full validation pass measured 4.5 min with 15 sets (246/289/283 s over
   # 1.1.0's three in-epoch rounds) and still ~4-5 min with 1.6.0's 18 sets
   # (the tensorboard gap between the last train log and each val round).
+  # 2.0.0 has 24: the nine per-voice sets add ~4.3 h of audio, which at that
+  # measured throughput is ~2 min a round, so budget 6-7 min. Cost batching
+  # on validation pulls the other way (the short-clip sets no longer run at a
+  # batch_size sized for their longest clip), so this is a ceiling, not a
+  # prediction.
   # At 20,000 steps that is ~20 rounds, ~1.5 h of a ~29 h run (1.6.0 paced
   # 78-103 min per 1,000 steps including the round; 8,000 steps in 11.7 h).
   # Must stay < batches per epoch (measured 76,152 under cost batching with
@@ -1414,7 +1532,9 @@ macro_metrics:
   # in-domain UltiMed slices, and oli (see below). A gain on medical French
   # only counts if it does not cost general FR/EN. acronyms (tiny, noisy) and
   # parrot (out-of-domain, never trained) are tracked but kept out of the
-  # monitor.
+  # monitor, and so are the nine per-voice sets: they resample the same val
+  # split as the per-source slices, so putting them here would weigh the same
+  # audio twice over.
   #
   # oli_drug_sentence carries weight here despite being the smallest set,
   # because it is the ONLY real recorded human speech in the whole setup that

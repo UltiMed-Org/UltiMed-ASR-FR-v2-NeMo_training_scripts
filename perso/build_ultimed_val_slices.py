@@ -33,6 +33,11 @@ that benchmark decodes one clip at a time and must represent the split as
 released: 10,000 clips in total, every acronym and drug clip plus fixed PARHAF
 and dictionary samples.
 
+A second family of validation slices is per VOICE rather than per source: v2 is
+spoken by nine TTS voices, and one of them being learnt worse than the others is
+invisible in a per-source metric since every source uses all nine. See
+VOICE_QUOTAS below for the mix, the cost and why they stay out of macro_metrics.
+
 PARROT is eval-only (CC BY-NC-SA), absent from the release-wide splits, and
 never trained on, so its out-of-domain monitor slice comes from PARROT/test.jsonl.
 
@@ -54,6 +59,7 @@ Usage:
 import argparse
 import json
 import random
+from collections import defaultdict
 from pathlib import Path
 
 # (source manifest, category or None for all rows, output, sample size or None
@@ -72,12 +78,42 @@ SLICES = [
     ("train.jsonl", "drugs", "train.drugs.jsonl", None, False),
 ]
 
+#: Per-voice validation slices: one small set per v2 TTS voice, so tensorboard
+#: carries nine ``voice_<name>val_wer`` curves next to the per-source ones. What
+#: they are for: a voice the model handles worse than the others is invisible in
+#: a per-source metric, because every source is spoken by all nine. The QC flag
+#: rates say that is a real risk, spanning 14x from fr_female at 0.30% to
+#: h_itf_def at 4.26% (and on PARHAF alone the worst voice is a different one,
+#: h_frf_ptm at 19.9%), so a voice may well be learnt worse than the average.
+#:
+#: The category mix is FIXED, not sampled, so the nine curves are comparable: an
+#: accidentally dictionary-heavy slice would otherwise read as a better voice.
+#: acronyms is left out because the val split holds only 12-25 acronym clips per
+#: voice, which is noise, and acronyms keeps its own set anyway.
+#:
+#: Cost: 75 clips per voice is ~0.46 h of audio, ~4.2 h for the nine. A full
+#: validation pass measured 4.5 min over roughly 10 h of audio, so this is about
+#: 2 min a round, ~40 min over a 20-round run. It buys ~4.4k reference words per
+#: voice (40 dictionary clips at ~21 s, 25 parhaf at ~30 s, 10 drugs at ~15 s),
+#: which is enough to see a 2-point WER gap between voices and not enough to
+#: chase a 0.5-point one.
+#:
+#: These sets are observability only: they overlap the per-source slices (same
+#: val split), so training_config.yaml keeps them OUT of macro_metrics, where
+#: they would count the same clips a second time in the checkpoint monitor.
+VOICE_QUOTAS = {"dictionary": 40, "parhaf": 25, "drugs": 10}
+
 SEED = 42
 
 
-def write_slice(rows: list[str], n: "int | None", out: Path) -> None:
+def _sample(rows: list[str], n: "int | None") -> list[str]:
+    """``n`` of ``rows``, or all of them, drawn the same way on every run."""
     rng = random.Random(SEED)
-    picked = rows if n is None or len(rows) <= n else rng.sample(rows, n)
+    return rows if n is None or len(rows) <= n else rng.sample(rows, n)
+
+
+def write_slice(rows: list[str], n: "int | None", out: Path) -> None:
+    picked = _sample(rows, n)
     out.write_text("\n".join(picked) + "\n")
     hours = sum(json.loads(r)["duration"] for r in picked) / 3600
     print(f"{out}: {len(picked)} clips ({hours:.2f} h) from {len(rows)} eligible")
@@ -91,6 +127,36 @@ def read_rows(src: Path, keep) -> list[str]:
             if line and keep(json.loads(line)):
                 rows.append(line)
     return rows
+
+
+def write_voice_slices(base: Path, keep) -> None:
+    """One validation slice per voice, each with the same category mix.
+
+    Args:
+        base: the NeMO_files directory, read for ``val.jsonl``.
+        keep: the duration filter the per-source val slices use, so a voice
+            slice cannot hold a clip those would have dropped.
+    """
+    pools = defaultdict(list)
+    for line in read_rows(base / "val.jsonl", keep):
+        row = json.loads(line)
+        if row["category"] in VOICE_QUOTAS and row.get("voice"):
+            pools[(row["voice"], row["category"])].append(line)
+    if not pools:
+        print("no voice field in val.jsonl, skipping the per-voice slices")
+        return
+
+    size = sum(VOICE_QUOTAS.values())
+    for voice in sorted({voice for voice, _ in pools}):
+        picked = []
+        for category, n in sorted(VOICE_QUOTAS.items()):
+            pool = pools[(voice, category)]
+            if len(pool) < n:
+                # Not fatal, but it breaks the comparability the fixed mix is
+                # for, so it has to be visible rather than silently smaller.
+                print(f"  WARNING {voice}/{category}: {len(pool)} clips for a quota of {n}")
+            picked.extend(_sample(pool, n))
+        write_slice(picked, None, base / f"val.voice.{voice}.down-{size}.jsonl")
 
 
 def main() -> None:
@@ -116,6 +182,10 @@ def main() -> None:
             return not capped or args.min_duration <= r["duration"] <= args.max_duration
 
         write_slice(read_rows(base / src_name, keep), n, base / out_name)
+
+    write_voice_slices(
+        base, lambda r: args.min_duration <= r["duration"] <= args.max_duration
+    )
 
 if __name__ == "__main__":
     main()
