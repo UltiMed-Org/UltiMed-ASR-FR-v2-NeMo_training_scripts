@@ -97,7 +97,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--nemo-files-dir",
-        default="./perso/ultimed_data_ignore-backups/NeMO_files",
+        # v2 (nine TTS voices), which is what training_config.yaml points at. The
+        # v1 directory is one level up and still on disk, so a default left there
+        # would quietly rebuild v1 slices that no config reads any more.
+        default="./perso/ultimed_data_ignore-backups/v2/NeMO_files",
         help="UltiMed NeMO_files directory (release-wide splits + PARROT/)",
     )
     parser.add_argument("--max-duration", type=float, default=45.0)
