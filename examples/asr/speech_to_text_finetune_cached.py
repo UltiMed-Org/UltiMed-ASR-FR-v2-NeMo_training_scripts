@@ -52,6 +52,7 @@ the original script.
 """
 import contextlib
 import math
+import os
 import types
 import time
 
@@ -75,7 +76,10 @@ torch.load = lambda *args, **kwargs: _original_torch_load(
 import lightning.pytorch as pl
 
 from nemo.collections.asr.models import ASRModel
-from nemo.collections.asr.parts.utils.asr_batching import get_duration_cost_batch_sampler
+from nemo.collections.asr.parts.utils.asr_batching import (
+    get_duration_cost_batch_sampler,
+    rnnt_batch_cost,
+)
 from nemo.collections.asr.parts.utils.data_leak_check import check_data_leaks, collect_manifests
 from nemo.collections.asr.parts.utils.config_audit import (
     assert_all_consumed,
@@ -897,6 +901,67 @@ class _NormalisedWERCallback(pl.Callback):
             trainer.logger.log_metrics(logged, step=trainer.global_step)
 
 
+class _MemoryProbeCallback(pl.Callback):
+    """Log one line of peak VRAM per training batch, next to that batch's shape.
+
+    Enabled by ``NEMO_MEM_PROBE=<n>``, n being how many batches to report
+    (perso/oom_margin_check.sh sets it). Dev diagnostic, off by default and
+    free when off: it is not a run setting and deliberately has no config key.
+
+    It exists because the cost model in asr_batching.py was fitted against
+    ``nvidia-smi`` peaks taken over a WHOLE oom_margin_check run. That run
+    walks every corner of the frontier (one 40 s clip, then sixteen 14.6 s
+    ones, all at the same cost) and nvidia-smi also counts blocks the caching
+    allocator merely holds, so one number per run cannot say which batch shape
+    cost what, and "45 s x1 at budget 20250 OOMs" could have been any corner.
+    This resets torch's own counter around each batch, so cost model and
+    measurement finally line up per batch shape.
+
+    Columns: n clips, max and summed duration, the cost the sampler charged
+    (rnnt_batch_cost, the thing being validated), max label length, and the
+    allocated / reserved peaks in MiB.
+    """
+
+    def __init__(self, batches):
+        self.batches = batches
+        self.seen = 0
+
+    def _active(self):
+        return self.seen < self.batches and torch.cuda.is_available()
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        if self._active():
+            torch.cuda.reset_peak_memory_stats()
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        if not self._active():
+            return
+        self.seen += 1
+        _signals, signal_lens, _tokens, token_lens = batch[:4]
+        # Durations, because that is what the cost model is written in. This
+        # reads the standard batch, where element 1 counts audio samples; under
+        # use_cached_encoder it counts latent frames instead, so the durations
+        # would be wrong and the line says so rather than lying.
+        model_cfg = getattr(pl_module, "cfg", None)
+        train_cfg = (model_cfg.get("train_ds", {}) or {}) if model_cfg is not None else {}
+        sample_rate = float(train_cfg.get("sample_rate", 16000) or 16000)
+        durations = (signal_lens.detach().cpu().float() / sample_rate).tolist()
+        unit = "s" if max(durations) > 0.5 else "s?(cached latents, not audio)"
+        mib = 1024.0 ** 2
+        logging.info(
+            f"[mem-probe] batch {self.seen}/{self.batches}: n={len(durations):2d} "
+            f"max_dur={max(durations):5.1f}{unit} sum_dur={sum(durations):6.1f}s "
+            f"cost={rnnt_batch_cost(durations):8.0f} max_U={int(token_lens.max()):4d} "
+            f"peak_alloc={torch.cuda.max_memory_allocated() / mib:8.0f}MiB "
+            f"peak_reserved={torch.cuda.max_memory_reserved() / mib:8.0f}MiB"
+        )
+        if self.seen == self.batches:
+            logging.info(
+                "[mem-probe] done. Read the cost column against peak_alloc: the cost "
+                "model is right if they rise together across batch shapes."
+            )
+
+
 class _MacroMetricCallback(pl.Callback):
     """Averages already-logged validation metrics into macro metrics.
 
@@ -1119,6 +1184,14 @@ def _build(cfg):
         trainer.callbacks.append(_FrozenEvalCallback(frozen_modules))
         logging.info(
             f"_FrozenEvalCallback active on {len(frozen_modules)} frozen module(s)."
+        )
+
+    probe_batches = int(os.environ.get("NEMO_MEM_PROBE", "0") or 0)
+    if probe_batches > 0:
+        trainer.callbacks.append(_MemoryProbeCallback(probe_batches))
+        logging.info(
+            f"NEMO_MEM_PROBE={probe_batches}: logging per-batch VRAM peaks "
+            f"(see _MemoryProbeCallback)."
         )
 
     # Verify what's trainable
