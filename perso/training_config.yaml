@@ -1173,11 +1173,19 @@ model:
     freq_masks: 2  # Number of frequency bands to mask
     freq_width: 25  # Maximum width of each mask
 
-    # Time masking - enabled for the UltiMed run: single TTS voice with
-    # very regular pacing makes time-structure overfitting likely.
-    # Float time_width = adaptive, each mask up to 5% of the utterance
-    # (FastConformer recipes use 10 x 0.05; 5 is a gentler fine-tune dose).
-    time_masks: 5
+    # Time masking. v1 used 5 because the corpus was ONE TTS voice with very
+    # regular pacing, so time-structure overfitting was the main risk and heavy
+    # masking was the cheap defence. v2 carries nine voices (2 shipped Voxtral
+    # ones + 7 hybrids), and the measured per-voice pacing spread is real: the
+    # median speaking rate runs 13.6 to 15.0 chars/s across the corpus with a
+    # p10-p90 of 11.8-17.6 within PARHAF alone. The corpus now supplies part of
+    # the variation SpecAugment was faking, so the dose comes down to 3.
+    # Not to 0: the target domain is dictated human speech, far more variable
+    # than any TTS, and masking is still the main thing standing between the
+    # encoder and the synthetic acoustics it is being fed.
+    # (FastConformer recipes use 10 x 0.05; 3 is a gentle fine-tune dose.)
+    # Float time_width = adaptive, each mask up to 5% of the utterance.
+    time_masks: 3
     time_width: 0.05
 
     # Cutout rectangles - random rectangular masks
