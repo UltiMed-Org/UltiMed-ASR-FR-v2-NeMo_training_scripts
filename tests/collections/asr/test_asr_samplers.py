@@ -11,13 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib.util
 import os
 import tempfile
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import soundfile as sf
 import torch
+from omegaconf import OmegaConf
 
 from nemo.collections.asr.data import audio_to_text
 from nemo.collections.asr.parts.utils.asr_batching import (
@@ -26,6 +30,32 @@ from nemo.collections.asr.parts.utils.asr_batching import (
     rnnt_batch_cost,
 )
 from nemo.collections.asr.parts.utils.manifest_utils import write_manifest
+
+#: The fine-tune entry point that owns the validation rebuild. It is an
+#: ``examples/`` script, not an importable package, so it is loaded by path.
+_FINETUNE_SCRIPT = Path(__file__).resolve().parents[3] / "examples" / "asr" / "speech_to_text_finetune_cached.py"
+
+_finetune_module = None
+
+
+def _load_finetune_module():
+    """Import the fine-tune script by path, undoing its global ``torch.load`` patch.
+
+    The script sets ``torch.load``'s default to ``weights_only=False`` for the
+    whole process at import time (it has to, to read NeMo checkpoints). Here that
+    would leak into every other test in the run, so it is put back.
+    """
+    global _finetune_module
+    if _finetune_module is None:
+        saved_load = torch.load
+        spec = importlib.util.spec_from_file_location("finetune_cached_under_test", _FINETUNE_SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            torch.load = saved_load
+        _finetune_module = module
+    return _finetune_module
 
 
 class TestASRSamplers:
@@ -265,3 +295,106 @@ class TestASRSamplers:
             DurationCostBatchSampler(durations=[10.0], budget=0)
         with pytest.raises(ValueError):
             DurationCostBatchSampler(durations=[10.0], budget=15000.0, max_batch_size=0)
+
+    # ---- validation cost batching -------------------------------------------
+    # Validation is batched by the fine-tune script, not by the sampler itself,
+    # and it is the wiring that fails quietly: one `cost_batching` block has to
+    # reach fifteen `ds_item` entries, and if it reaches none of them every set
+    # silently stays on its fallback `batch_size` and the only symptom is a slow
+    # validation epoch.
+
+    def _write_dataset(self, test_dir, name, durations, sample_rate=16000):
+        """A real ``AudioToCharDataset`` over clips of the given durations.
+
+        The audio is silence: nothing here listens to it, but the sampler reads
+        the manifest durations and the collate function reads the waveforms.
+        """
+        metadata = []
+        for n, duration in enumerate(durations):
+            filename = os.path.join(test_dir, f'{name}_{n:04d}.wav')
+            sf.write(filename, np.zeros(int(duration * sample_rate), dtype='float32'), sample_rate)
+            metadata.append({'audio_filepath': filename, 'duration': duration, 'text': 'non empty'})
+        manifest_filepath = os.path.join(test_dir, f'{name}.json')
+        write_manifest(manifest_filepath, metadata)
+        return audio_to_text.AudioToCharDataset(
+            manifest_filepath=manifest_filepath, labels=self.labels, sample_rate=sample_rate
+        )
+
+    @staticmethod
+    def _collate(batch):
+        return audio_to_text._speech_collate_fn(batch, pad_id=0)
+
+    @pytest.mark.unit
+    def test_validation_cost_batching_rebuilds_every_dataloader(self):
+        finetune = _load_finetune_module()
+        with tempfile.TemporaryDirectory() as test_dir:
+            mixed = self._write_dataset(test_dir, 'parhaf', [0.5] * 16 + [2.0, 2.0])
+            short = self._write_dataset(test_dir, 'fleurs', [1.0] * 8)
+            loaders = [
+                torch.utils.data.DataLoader(ds, batch_size=2, collate_fn=self._collate, shuffle=False)
+                for ds in (mixed, short)
+            ]
+            model = SimpleNamespace(
+                global_rank=0, world_size=1, _validation_dl=loaders,
+                _validation_names=['ultimed_parhaf_', 'fleurs_'],
+            )
+            # The block is written ONCE, at the validation_ds level: no ds_item
+            # carries a copy of it, which is the thing under test.
+            val_cfg = OmegaConf.create({
+                'batch_size': 2,
+                'shuffle': False,
+                'cost_batching': {'enabled': True, 'budget': 40.0, 'max_batch_size': 16,
+                                  'max_total_duration': 30.0, 'sort_pool_size': 512, 'seed': 42},
+                'ds_item': [
+                    {'name': 'ultimed_parhaf', 'batch_size': 2, 'shuffle': False, 'num_workers': 0},
+                    {'name': 'fleurs', 'batch_size': 6, 'shuffle': False, 'num_workers': 0},
+                ],
+            })
+
+            finetune.apply_cost_batch_sampler_to_validation(model, val_cfg)
+
+            rebuilt = model._validation_dl
+            assert len(rebuilt) == 2, "every validation set must be rebuilt"
+            for before, after in zip(loaders, rebuilt):
+                assert after is not before
+                assert isinstance(after.batch_sampler, DurationCostBatchSampler)
+                assert after.batch_sampler.budget == 40.0, "the shared block must reach every set"
+                assert after.batch_sampler.shuffle is False, "validation order must stay fixed"
+                assert after.collate_fn is before.collate_fn, "the NeMo collate must survive"
+                assert after.dataset is before.dataset, "the dataset must not be rebuilt"
+
+            # Adaptive where a fixed batch_size of 2 could not be: the sixteen
+            # 0.5 s clips travel together (cost 4*16*0.25 + 6*0.25 = 17.5 of the
+            # 40 budget) while one 2.0 s clip already costs 4*4 + 6*4 = 40 and so
+            # goes alone.
+            batches = [list(b) for b in rebuilt[0].batch_sampler]
+            assert sorted(i for b in batches for i in b) == list(range(18)), "every clip once"
+            assert max(len(b) for b in batches) == 16
+            assert all(len(b) == 1 for b in batches if {16, 17} & set(b))
+
+            # A rebuilt loader must still actually yield: shape[0] is the number
+            # of clips the sampler put in that batch, not the config batch_size.
+            signals = next(iter(rebuilt[1]))[0]
+            assert signals.shape[0] == len(list(rebuilt[1].batch_sampler)[0]) == 8
+
+    @pytest.mark.unit
+    def test_validation_cost_batching_respects_the_switch_and_the_single_set_case(self):
+        finetune = _load_finetune_module()
+        with tempfile.TemporaryDirectory() as test_dir:
+            dataset = self._write_dataset(test_dir, 'diy', [1.0] * 4)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=2, collate_fn=self._collate)
+            model = SimpleNamespace(global_rank=0, world_size=1, _validation_dl=loader,
+                                    _validation_names=['diy_'])
+
+            for off in (OmegaConf.create({'batch_size': 2}),
+                        OmegaConf.create({'batch_size': 2, 'cost_batching': {'enabled': False}})):
+                finetune.apply_cost_batch_sampler_to_validation(model, off)
+                assert model._validation_dl is loader, "off must leave the dataloader untouched"
+
+            # One validation set: NeMo hands over a bare DataLoader rather than a
+            # list, and it has to come back as one or Lightning sees no val set.
+            finetune.apply_cost_batch_sampler_to_validation(model, OmegaConf.create(
+                {'batch_size': 2, 'shuffle': False, 'cost_batching': {'enabled': True, 'budget': 40.0}}
+            ))
+            assert isinstance(model._validation_dl, torch.utils.data.DataLoader)
+            assert isinstance(model._validation_dl.batch_sampler, DurationCostBatchSampler)

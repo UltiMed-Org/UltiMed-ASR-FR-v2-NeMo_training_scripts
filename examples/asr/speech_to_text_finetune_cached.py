@@ -216,40 +216,110 @@ def apply_cost_batch_sampler(asr_model, train_cfg):
         logging.warning("cost_batching is enabled but there is no training dataloader to rebuild.")
         return
 
+    asr_model._train_dl = _rebuild_with_cost_sampler(asr_model, dataloader, train_cfg, 'train')
+
+
+def _rebuild_with_cost_sampler(asr_model, dataloader, ds_cfg, label):
+    """Rebuild one dataloader around :class:`DurationCostBatchSampler`.
+
+    Shared by the training and validation entry points, which differ only in
+    which attribute holds the dataloader and in the budget they pass: the
+    batching itself is identical, and validation deserves the same packing for
+    the same reason (a fixed ``batch_size`` has to be sized for the longest clip
+    the slice can produce, so it wastes the GPU on every short one).
+
+    Args:
+        asr_model: the model, for ``global_rank`` / ``world_size``.
+        dataloader: the dataloader NeMo just built, read for its dataset and its
+            ``collate_fn``.
+        ds_cfg: a dataset config block carrying ``cost_batching`` plus the loader
+            keys (``num_workers``, ``pin_memory``, ``shuffle``, ``drop_last``).
+        label: what to call this dataloader in the log line.
+
+    Returns:
+        The replacement DataLoader.
+    """
     dataset = dataloader.dataset
     if isinstance(dataset, torch.utils.data.IterableDataset):
         raise ValueError(
-            "cost_batching needs a map-style dataset (it draws batches by index), but the train "
-            f"dataset is {type(dataset).__name__}. It is incompatible with tarred, concat and "
-            "lhotse datasets."
+            "cost_batching needs a map-style dataset (it draws batches by index), but the "
+            f"{label} dataset is {type(dataset).__name__}. It is incompatible with tarred, "
+            "concat and lhotse datasets."
         )
 
-    sampler = get_duration_cost_batch_sampler(asr_model, dataset, train_cfg)
-    num_workers = train_cfg.get('num_workers', 0)
+    sampler = get_duration_cost_batch_sampler(asr_model, dataset, ds_cfg)
+    num_workers = ds_cfg.get('num_workers', 0)
     loader_kwargs = {}
     if num_workers > 0:
-        loader_kwargs['persistent_workers'] = train_cfg.get('persistent_workers', False)
-        loader_kwargs['prefetch_factor'] = train_cfg.get('prefetch_factor', 2)
+        loader_kwargs['persistent_workers'] = ds_cfg.get('persistent_workers', False)
+        loader_kwargs['prefetch_factor'] = ds_cfg.get('prefetch_factor', 2)
 
-    asr_model._train_dl = torch.utils.data.DataLoader(
+    new_dataloader = torch.utils.data.DataLoader(
         dataset=dataset,
         batch_sampler=sampler,
         collate_fn=dataloader.collate_fn,
         num_workers=num_workers,
-        pin_memory=train_cfg.get('pin_memory', False),
+        pin_memory=ds_cfg.get('pin_memory', False),
         **loader_kwargs,
     )
 
     stats = sampler.stats()
+    fixed = max(ds_cfg.get('batch_size', 1) or 1, 1)
     logging.info(
-        f"Cost batching on: {stats['batches']} batches/epoch over {stats['samples']} clips "
-        f"(was {math.ceil(stats['samples'] / max(train_cfg.get('batch_size', 1) or 1, 1))} at a fixed "
-        f"batch_size of {train_cfg.get('batch_size')}). "
+        f"Cost batching on for {label}: {stats['batches']} batches over {stats['samples']} clips "
+        f"(was {math.ceil(stats['samples'] / fixed)} at a fixed batch_size of {fixed}). "
         f"Clips per batch {stats['clips_per_batch_min']}-{stats['clips_per_batch_max']} "
         f"(mean {stats['clips_per_batch_mean']:.1f}), audio seconds per batch "
         f"mean {stats['audio_seconds_per_batch_mean']:.0f} max {stats['audio_seconds_per_batch_max']:.0f}, "
         f"cost max {stats['cost_max']:.0f} of a {sampler.budget:.0f} budget."
     )
+    return new_dataloader
+
+
+def apply_cost_batch_sampler_to_validation(asr_model, val_cfg):
+    """Give every validation dataloader the same cost-based batching as training.
+
+    Enabled by ``model.validation_ds.cost_batching.enabled``. The block lives
+    once at the ``validation_ds`` level and is merged into each ``ds_item``, so
+    fifteen validation sets do not carry fifteen copies of it; a set's own
+    ``batch_size`` is then only the fallback used with cost batching off.
+
+    Validation gets its own budget because it runs under ``no_grad``: there is no
+    backward pass to hold activations for, so the same VRAM fits a bigger batch.
+    The win is concentrated on the short-clip sets, which a ``batch_size`` sized
+    for the longest clip in the slice was starving.
+
+    Must run AFTER ``setup_multiple_validation_data``, which builds the
+    dataloaders this replaces.
+
+    Args:
+        asr_model: model whose ``_validation_dl`` was just built.
+        val_cfg: the ``model.validation_ds`` config block.
+    """
+    cost_cfg = val_cfg.get('cost_batching', None)
+    if not cost_cfg or not cost_cfg.get('enabled', False):
+        return
+
+    dataloaders = getattr(asr_model, '_validation_dl', None)
+    if not dataloaders:
+        logging.warning("validation cost_batching is enabled but there is no validation dataloader.")
+        return
+
+    single = not isinstance(dataloaders, (list, tuple))
+    dataloaders = [dataloaders] if single else list(dataloaders)
+    items = val_cfg.get('ds_item', None)
+    names = getattr(asr_model, '_validation_names', None) or []
+
+    rebuilt = []
+    for idx, dataloader in enumerate(dataloaders):
+        # The per-set block when there is one (it carries num_workers, pin_memory
+        # and shuffle), else the validation_ds block itself.
+        ds_cfg = items[idx] if (items is not None and idx < len(items)) else val_cfg
+        ds_cfg = OmegaConf.merge(ds_cfg, OmegaConf.create({'cost_batching': cost_cfg}))
+        label = names[idx].strip('_') if idx < len(names) else f"val_{idx}"
+        rebuilt.append(_rebuild_with_cost_sampler(asr_model, dataloader, ds_cfg, label))
+
+    asr_model._validation_dl = rebuilt[0] if single else rebuilt
 
 
 def setup_dataloaders(asr_model, cfg):
@@ -265,6 +335,7 @@ def setup_dataloaders(asr_model, cfg):
     asr_model.setup_training_data(cfg.model.train_ds)
     apply_cost_batch_sampler(asr_model, cfg.model.train_ds)
     asr_model.setup_multiple_validation_data(cfg.model.validation_ds)
+    apply_cost_batch_sampler_to_validation(asr_model, cfg.model.validation_ds)
     if hasattr(cfg.model, 'test_ds') and cfg.model.test_ds.manifest_filepath is not None:
         asr_model.setup_multiple_test_data(cfg.model.test_ds)
 

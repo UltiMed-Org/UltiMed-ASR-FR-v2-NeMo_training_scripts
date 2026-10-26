@@ -543,11 +543,40 @@ model:
     # that set validates, so they do not sit on RAM/CPU between rounds
     # (4 persistent workers each was fine with 10 sets, not with 15).
     # Metric names are "<name>val_wer" (e.g. ultimed_dictionaryval_wer).
+    #
+    # Cost batching, same sampler as train_ds (one block here, merged into every
+    # ds_item below by apply_cost_batch_sampler_to_validation, so fifteen sets do
+    # not carry fifteen copies). With it on, each set's own `batch_size` is only
+    # the fallback for when it is off.
+    #
+    # Why validation needs this at all: a fixed batch_size has to be sized for
+    # the longest clip its slice can produce, so ultimed_parhaf ran at 2 and the
+    # fleurs sets at 6 while their clips are a third as long. The sampler sizes
+    # each batch instead, which both removes the OOM that forced 8 -> 6 and
+    # speeds the short-clip sets up (up to max_batch_size 16 where today they
+    # take 6).
+    #
+    # Why the budget is higher than train_ds's 15000: validation runs under
+    # no_grad, so there is no backward pass holding activations. The value is
+    # bounded by what the v1 run already survived rather than by a fresh fit: the
+    # worst batch the old settings could draw was ultimed_parhaf's 2 clips at the
+    # slice's 45 s cap, i.e. cost 4*(2025+2025) + 6*2025 = 28350, and that ran.
+    # 24000 therefore cannot be a regression while being 1.6x the train budget.
+    # It is NOT independently measured: re-run perso/oom_margin_check.sh before
+    # trusting a higher one, and remember the optimizer moments (~0.95 GB for
+    # 118.9M trainable params at fp32) stay resident through validation.
+    cost_batching:
+      enabled: true
+      budget: 24000
+      max_batch_size: 16
+      max_total_duration: 240.0
+      sort_pool_size: 512
+      seed: 42
     ds_item:
       - name: diy
         manifest_filepath: "./perso/nemo_dataset/val.json"
         sample_rate: 16000
-        batch_size: 6  # reduced from 8 — OOM on validation at end of epoch 1
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
         shuffle: false  # Never shuffle validation
         num_workers: 2
         persistent_workers: false
@@ -557,7 +586,7 @@ model:
       - name: drug_sentence
         manifest_filepath: "./perso/drug_sentence_dataset/val.json"
         sample_rate: 16000
-        batch_size: 6  # reduced from 8 — OOM on validation at end of epoch 1
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
         shuffle: false  # Never shuffle validation
         num_workers: 2
         persistent_workers: false
@@ -575,7 +604,7 @@ model:
       - name: oli_drug_sentence
         manifest_filepath: "./perso/oli_spoken_dataset/nemo_manifest_ordered_uncapitaliazedDCI.json"
         sample_rate: 16000
-        batch_size: 6  # reduced from 8 — OOM on validation at end of epoch 1
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
         shuffle: false  # Never shuffle validation
         num_workers: 2
         persistent_workers: false
@@ -589,7 +618,7 @@ model:
       - name: ultimed_dictionary
         manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.dictionary.down-600.jsonl"
         sample_rate: 16000
-        batch_size: 4  # clips reach the 45 s cap; keep the loss lattice bounded
+        batch_size: 4  # fallback only; the cost sampler bounds the lattice now
         shuffle: false
         num_workers: 2
         persistent_workers: false
@@ -599,7 +628,7 @@ model:
       - name: ultimed_parhaf
         manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.parhaf.down-300.jsonl"
         sample_rate: 16000
-        batch_size: 2  # long-form hospital reports, many near 45 s
+        batch_size: 2  # fallback only; cost batching is what makes 45 s safe
         shuffle: false
         num_workers: 2
         persistent_workers: false
@@ -631,7 +660,7 @@ model:
       - name: ultimed_parrot
         manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/PARROT/test.down-200.jsonl"
         sample_rate: 16000
-        batch_size: 2  # long-form radiology reports
+        batch_size: 2  # fallback only; cost batching is what makes 45 s safe
         shuffle: false
         num_workers: 2
         persistent_workers: false
@@ -744,7 +773,7 @@ model:
       - name: diy
         manifest_filepath: "./perso/nemo_dataset/test.json"
         sample_rate: 16000
-        batch_size: 6  # reduced from 8 — OOM on validation at end of epoch 1
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
         shuffle: false
         num_workers: 4
         persistent_workers: true
@@ -754,7 +783,7 @@ model:
       - name: drug_sentence
         manifest_filepath: "./perso/drug_sentence_dataset/test.json"
         sample_rate: 16000
-        batch_size: 6  # reduced from 8 — OOM on validation at end of epoch 1
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
         shuffle: false
         num_workers: 4
         persistent_workers: true
@@ -1034,7 +1063,7 @@ model:
       - name: united_syn_med
         manifest_filepath: "./perso/downloaded_datasets_ignore-backups/united_syn_med/test/test.kept.unparenthesized.down-2k.json"
         sample_rate: 16000
-        batch_size: 6  # reduced from 8 — OOM on validation at end of epoch 1
+        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
         shuffle: false
         num_workers: 4
         persistent_workers: true
