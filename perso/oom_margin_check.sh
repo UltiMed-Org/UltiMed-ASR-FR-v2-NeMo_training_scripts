@@ -142,6 +142,8 @@ TOTAL=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head
 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -l 1 > "$VLOG" &
 SAMPLER=$!
 
+# One epoch over the fixture is a deliberately truncated run, which the config audit
+# refuses unless told (optim.sched.max_steps describes the real run, not this probe).
 "$PY" examples/asr/speech_to_text_finetune_cached.py \
   --config-dir="$PWD/perso" --config-name=training_config \
   "model.train_ds.manifest_filepath=[\"$WORST\"]" \
@@ -149,6 +151,7 @@ SAMPLER=$!
   "model.train_ds.batch_size=${BS}" \
   "model.train_ds.cost_batching.budget=${BUDGET}" \
   trainer.max_epochs=1 \
+  config_audit.allow_truncated_anneal=true \
   trainer.val_check_interval=1.0 \
   +trainer.limit_val_batches=0.0 \
   trainer.num_sanity_val_steps=0 \
