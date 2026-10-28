@@ -1787,6 +1787,11 @@ exp_manager:
   #            other batch shapes; what it costs on a lone clip is measured
   #            with `perso/oom_margin_check.sh` (LONE mode, NEMO_MEM_PROBE)
   #            and the cap follows that measurement.
+  #        (5) model.loss_weighting: per_token. The loss over a batch is
+  #            its summed clip losses over one constant instead of its own
+  #            clip count, so a lone long clip's tokens no longer weigh up
+  #            to 16x a short clip's; long-form emphasis, if wanted, goes
+  #            through explicit upsampling instead.
   #        Two things the v2 numbers change and nothing in this file yet
   #        reflects (see the comments at those keys): the mean batch is
   #        ~6.2 clips / ~120 audio-s instead of ~7.7 / ~138 because the
