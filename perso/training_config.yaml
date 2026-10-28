@@ -306,6 +306,26 @@ model:
   loss_weighting:
     mode: per_token
 
+  # TODO (v2, after the dataset): lower the TDT loss table's memory and tune
+  # its kernel for this card (RTX 3090 Ti, 24 GB, ~1 TB/s). The loss forces
+  # an fp32 copy of the joint output plus an fp32 gradient of the same
+  # [T, U, V] shape (V = 8198): ~10 bytes per element with the bf16 joint
+  # output, ~12 GB of the 23.4 GB peak for a lone 40 s clip. Plan:
+  #   (1) patch the numba TDT kernel (nemo/collections/asr/parts/numba/
+  #       rnnt_loss/) to read fp16 logits and write fp16 gradients while
+  #       keeping alphas, betas and the log-softmax denominators in fp32:
+  #       at 300+ nats a 16-bit accumulator is off by 0.25 (fp16) to 2.0
+  #       (bf16) nats, i.e. 1.3x to 7.4x on each gradient cell, a bias that
+  #       accumulation does not average away. Today the workspace takes the
+  #       input dtype, so this is a real kernel change, not a flag.
+  #   (2) check whether the gradient can overwrite the fp32 copy in place.
+  #   (3) profile and tune launch config for our shapes (T up to ~500-750,
+  #       U up to ~300-600, B mostly 1-16) on this card.
+  # Gate: a test that the patched loss and gradients match fp32 to a tight
+  # tolerance on real clips, then re-run perso/oom_margin_check.sh LONE
+  # ladder. Expected ~2.5x less table memory, ceiling ~40 s -> ~55-60 s
+  # (estimate), and a larger cost budget for every batch.
+
   # Training dataset configuration
   train_ds:
     # Multiple training manifests are concatenated by NeMo (one pass over
