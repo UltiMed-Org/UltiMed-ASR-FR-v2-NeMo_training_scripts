@@ -436,6 +436,18 @@ model:
     # ones. Long clips are therefore upweighted about 8x per clip. That is a
     # feature here (long-form is the weak point this fine-tune targets) but it
     # is a real reweighting of the corpus, not a neutral change.
+    #
+    # TODO (v2, decide before the next run): make the weighting explicit
+    # instead of a by-product of batch packing. mean_batch already divides by
+    # the clips in a batch; the skew comes from accumulation then averaging
+    # micro-batches equally, so a token's weight depends on how many
+    # neighbours it was packed with (alone: 1, one of 16: 1/16), and any
+    # change to budget or max_batch_size silently changes the corpus mix.
+    # Fix: loss reduction 'sum' divided by a fixed constant (mean tokens per
+    # micro-batch, measured at startup), so every token weighs the same
+    # whatever its batch; then, if long-form should count more, upsample
+    # PARHAF in the manifest mix like drugs, as a visible, logged knob.
+    # Re-check gradient_clip_val after, since the gradient scale moves.
     # TODO (v2, before the next run): make the cost model see label length.
     # rnnt_batch_cost (nemo/collections/asr/parts/utils/asr_batching.py) prices
     # a clip at d^2, which assumes U (tokens) tracks T (frames). The lattice is
