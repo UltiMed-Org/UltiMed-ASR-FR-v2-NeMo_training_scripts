@@ -401,6 +401,8 @@ class RNNTLoss(Loss):
                 `mean_batch` will average the losses in the batch
                 `mean` will divide each loss by the target length and then average
                 `mean_volume` will add up all the losses and divide by sum of target lengths
+                `sum_fixed` will add up all the losses and divide by ``fixed_normalizer``, a
+                constant set by the caller, so every token weighs the same in every batch
 
             loss_name: String that is resolved into an RNNT loss function. Available list of losses
                 is ininitialized in `RNNT_LOSS_RESOLVER` dictionary.
@@ -410,11 +412,15 @@ class RNNTLoss(Loss):
         """
         super(RNNTLoss, self).__init__()
 
-        if reduction not in [None, 'mean', 'sum', 'mean_batch', 'mean_volume']:
-            raise ValueError('`reduction` must be one of [mean, sum, mean_batch, mean_volume]')
+        if reduction not in [None, 'mean', 'sum', 'mean_batch', 'mean_volume', 'sum_fixed']:
+            raise ValueError('`reduction` must be one of [mean, sum, mean_batch, mean_volume, sum_fixed]')
 
         self._blank = num_classes
         self.reduction = reduction
+        # Divisor of the 'sum_fixed' reduction (added for the UltiMed fine-tune
+        # with Claude Code). A constant rather than anything read off the batch,
+        # so every token weighs the same whatever it was packed with.
+        self.fixed_normalizer = 1.0
         self._loss = resolve_rnnt_loss(loss_name, blank_idx=self._blank, loss_kwargs=loss_kwargs)
         self._force_float32 = RNNT_LOSS_RESOLVER[loss_name].force_float32
         self._fp16_compat_checked = False
@@ -433,6 +439,10 @@ class RNNTLoss(Loss):
             losses = losses.sum()
         elif self.reduction == 'mean_volume':
             losses = losses.sum() / target_lengths.sum()  # same as above but longer samples weigh more
+        elif self.reduction == 'sum_fixed':
+            # Sum of per-utterance losses over a constant: unlike mean_batch, a
+            # token's weight does not depend on how many clips share its batch.
+            losses = losses.sum() / self.fixed_normalizer
 
         return losses
 

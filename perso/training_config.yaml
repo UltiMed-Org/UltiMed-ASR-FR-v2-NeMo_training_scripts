@@ -286,6 +286,26 @@ model:
   joint:
     fused_batch_size: 1
 
+  # How the training loss is reduced over a batch.
+  #   per_token: sum of clip losses / one constant, the mean clips per training
+  #     batch (read off the cost sampler at startup and logged). Every token
+  #     then weighs the same whatever it was packed with, and a batch of
+  #     average composition gives the same value as mean_batch, so the
+  #     gradient scale and gradient_clip_val keep their meaning.
+  #   per_batch: NeMo's mean_batch, the v1 behaviour. With cost batching plus
+  #     accumulation it weighs a lone long clip's tokens up to 16x a short
+  #     clip's, and the weighting moves with budget / max_batch_size.
+  # Validation is not affected (the switch only lasts a training step), so
+  # val_loss stays comparable with earlier runs; train_loss is comparable on
+  # average but noisier per step, since a lone long clip now logs its full
+  # summed loss over the constant.
+  # Long-form emphasis is no longer implicit. If PARHAF should count more,
+  # upsample it in train_ds.manifest_filepath like drugs, where it is visible.
+  # Implemented 2026-10-28 with Claude Code (reduction 'sum_fixed' in
+  # nemo/collections/asr/losses/rnnt.py, apply_loss_weighting in the script).
+  loss_weighting:
+    mode: per_token
+
   # Training dataset configuration
   train_ds:
     # Multiple training manifests are concatenated by NeMo (one pass over
@@ -430,24 +450,11 @@ model:
     # So it is faster AND trains on more data, because the old fixed batch size
     # was sized for a worst case that almost never occurred.
     #
-    # Known and accepted side effect: the RNNT loss reduces with mean_batch, and
-    # gradient accumulation weights every micro-batch equally, so a batch of one
-    # 38 s clip carries the same gradient weight as a batch of sixteen short
-    # ones. Long clips are therefore upweighted about 8x per clip. That is a
-    # feature here (long-form is the weak point this fine-tune targets) but it
-    # is a real reweighting of the corpus, not a neutral change.
+    # Loss weighting across batches of different sizes: see
+    # model.loss_weighting. Up to v1 it was mean_batch, which made a lone 38 s
+    # clip's tokens weigh up to 16x a short clip's (alone: 1, one of 16: 1/16),
+    # so the batch budget silently set the corpus mix. Now per_token.
     #
-    # TODO (v2, decide before the next run): make the weighting explicit
-    # instead of a by-product of batch packing. mean_batch already divides by
-    # the clips in a batch; the skew comes from accumulation then averaging
-    # micro-batches equally, so a token's weight depends on how many
-    # neighbours it was packed with (alone: 1, one of 16: 1/16), and any
-    # change to budget or max_batch_size silently changes the corpus mix.
-    # Fix: loss reduction 'sum' divided by a fixed constant (mean tokens per
-    # micro-batch, measured at startup), so every token weighs the same
-    # whatever its batch; then, if long-form should count more, upsample
-    # PARHAF in the manifest mix like drugs, as a visible, logged knob.
-    # Re-check gradient_clip_val after, since the gradient scale moves.
     # TODO (v2, before the next run): make the cost model see label length.
     # rnnt_batch_cost (nemo/collections/asr/parts/utils/asr_batching.py) prices
     # a clip at d^2, which assumes U (tokens) tracks T (frames). The lattice is

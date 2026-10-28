@@ -398,3 +398,90 @@ class TestASRSamplers:
             ))
             assert isinstance(model._validation_dl, torch.utils.data.DataLoader)
             assert isinstance(model._validation_dl.batch_sampler, DurationCostBatchSampler)
+
+
+class TestLossWeighting:
+    """``model.loss_weighting``: a token's weight must not depend on its batch."""
+
+    @staticmethod
+    def _reduce(reduction, losses, normalizer=1.0):
+        from nemo.collections.asr.losses.rnnt import RNNTLoss
+
+        owner = SimpleNamespace(reduction=reduction, fixed_normalizer=normalizer)
+        return RNNTLoss.reduce(owner, losses, torch.ones_like(losses, dtype=torch.long))
+
+    @staticmethod
+    def _weight_of_first_clip(reduction, batch_size, normalizer=1.0):
+        losses = torch.ones(batch_size, requires_grad=True)
+        TestLossWeighting._reduce(reduction, losses, normalizer).backward()
+        return losses.grad[0].item()
+
+    @pytest.mark.unit
+    def test_sum_fixed_divides_the_sum_by_the_constant(self):
+        reduced = self._reduce("sum_fixed", torch.tensor([1.0, 2.0, 5.0]), normalizer=4.0)
+        assert reduced.item() == pytest.approx(2.0)
+
+    @pytest.mark.unit
+    def test_sum_fixed_weighs_a_clip_the_same_alone_or_among_sixteen(self):
+        # The defect being fixed: mean_batch gives a lone clip 1 and one of 16 only 1/16.
+        assert self._weight_of_first_clip("mean_batch", 1) == pytest.approx(1.0)
+        assert self._weight_of_first_clip("mean_batch", 16) == pytest.approx(1 / 16)
+        alone = self._weight_of_first_clip("sum_fixed", 1, normalizer=6.2)
+        crowded = self._weight_of_first_clip("sum_fixed", 16, normalizer=6.2)
+        assert alone == pytest.approx(crowded) == pytest.approx(1 / 6.2)
+
+    @staticmethod
+    def _fake_model(sampler_mean=None, batch_size=4):
+        loss = SimpleNamespace(reduction="mean_batch", fixed_normalizer=1.0)
+        if sampler_mean is None:
+            dataloader = SimpleNamespace(batch_sampler=None, batch_size=batch_size)
+        else:
+            stats = {"clips_per_batch_mean": sampler_mean}
+            dataloader = SimpleNamespace(batch_sampler=SimpleNamespace(stats=lambda: stats), batch_size=None)
+        seen = []
+
+        def training_step(batch, batch_nb):
+            seen.append(loss.reduction)
+            return {"loss": batch}
+
+        return SimpleNamespace(loss=loss, _train_dl=dataloader, training_step=training_step), seen
+
+    @staticmethod
+    def _cfg(mode):
+        block = {} if mode is None else {"loss_weighting": {"mode": mode}}
+        return OmegaConf.create({"model": {**block, "train_ds": {"batch_size": 4}}})
+
+    @pytest.mark.unit
+    def test_per_token_switches_only_during_the_training_step(self):
+        module = _load_finetune_module()
+        model, seen = self._fake_model(sampler_mean=6.2)
+        module.apply_loss_weighting(model, self._cfg("per_token"))
+        assert model.loss.fixed_normalizer == pytest.approx(6.2)
+        assert model.training_step("b", 0) == {"loss": "b"}
+        assert seen == ["sum_fixed"]
+        # Validation reuses the same loss object, so it must get mean_batch back.
+        assert model.loss.reduction == "mean_batch"
+
+    @pytest.mark.unit
+    def test_per_token_without_cost_batching_uses_the_batch_size(self):
+        module = _load_finetune_module()
+        model, _ = self._fake_model(sampler_mean=None, batch_size=8)
+        module.apply_loss_weighting(model, self._cfg("per_token"))
+        assert model.loss.fixed_normalizer == pytest.approx(8.0)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("mode", [None, "per_batch"])
+    def test_per_batch_and_absent_block_leave_nemo_untouched(self, mode):
+        module = _load_finetune_module()
+        model, seen = self._fake_model(sampler_mean=6.2)
+        original = model.training_step
+        module.apply_loss_weighting(model, self._cfg(mode))
+        assert model.training_step is original
+        assert model.loss.fixed_normalizer == 1.0
+
+    @pytest.mark.unit
+    def test_unknown_mode_is_refused(self):
+        module = _load_finetune_module()
+        model, _ = self._fake_model(sampler_mean=6.2)
+        with pytest.raises(ValueError, match="per_token or per_batch"):
+            module.apply_loss_weighting(model, self._cfg("per_clip"))

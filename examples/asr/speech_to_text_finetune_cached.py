@@ -326,6 +326,64 @@ def apply_cost_batch_sampler_to_validation(asr_model, val_cfg):
     asr_model._validation_dl = rebuilt[0] if single else rebuilt
 
 
+def apply_loss_weighting(asr_model, cfg):
+    """Make every training token weigh the same, whatever batch it was packed into.
+
+    Set by ``model.loss_weighting.mode``. NeMo's default ``mean_batch`` divides a
+    batch's summed loss by its own clip count, and gradient accumulation then
+    averages micro-batches equally. With cost batching that ties a token's weight
+    to its batch: a lone 38 s clip gets 1, a clip among sixteen short ones 1/16, and
+    changing the budget silently changes the corpus mix.
+
+    ``per_token`` switches training to the ``sum_fixed`` reduction: the summed loss
+    over one constant, the mean clips per training batch. A batch of average
+    composition then gives the same value as ``mean_batch``, so the gradient scale
+    (and ``gradient_clip_val``) keep their meaning, but the divisor no longer moves
+    with the batch. ``per_batch`` keeps NeMo's behaviour. Validation is untouched
+    either way: the reduction is switched only for the duration of a training step.
+
+    Must run after the training dataloader is final (cost sampler included), since
+    the normalizer is read from it.
+
+    Args:
+        asr_model: model whose ``loss`` and ``_train_dl`` are set up.
+        cfg: the full config.
+    """
+    mode = (cfg.model.get("loss_weighting", None) or {}).get("mode", "per_batch")
+    if mode == "per_batch":
+        logging.info("Loss weighting: per_batch (NeMo mean_batch, a token's weight depends on its batch).")
+        return
+    if mode != "per_token":
+        raise ValueError(f"model.loss_weighting.mode must be per_token or per_batch, got {mode!r}")
+
+    dataloader = getattr(asr_model, "_train_dl", None)
+    sampler = getattr(dataloader, "batch_sampler", None)
+    if hasattr(sampler, "stats"):
+        normalizer = sampler.stats()["clips_per_batch_mean"]
+        source = "mean clips per cost-batched training batch"
+    else:
+        normalizer = float(getattr(dataloader, "batch_size", None) or cfg.model.train_ds.batch_size)
+        source = "training batch_size"
+    loss = asr_model.loss
+    loss.fixed_normalizer = normalizer
+
+    original_training_step = asr_model.training_step
+
+    def _per_token_training_step(self, batch, batch_nb):
+        previous = loss.reduction
+        loss.reduction = "sum_fixed"
+        try:
+            return original_training_step(batch, batch_nb)
+        finally:
+            loss.reduction = previous
+
+    asr_model.training_step = types.MethodType(_per_token_training_step, asr_model)
+    logging.info(
+        f"Loss weighting: per_token, training loss = sum of clip losses / {normalizer:.2f} ({source}), "
+        "so every token weighs the same whatever its batch."
+    )
+
+
 def setup_dataloaders(asr_model, cfg):
     """
     Sets up the training, validation and test dataloaders for the model.
@@ -1258,6 +1316,10 @@ def _build(cfg):
         # Setup SpecAug
         if hasattr(cfg.model, 'spec_augment') and cfg.model.spec_augment is not None:
             asr_model.spec_augment = ASRModel.from_config_dict(cfg.model.spec_augment)
+
+    # After the dataloaders (the normalizer is read off the final train sampler)
+    # and before L2-SP, so its penalty is added to the reweighted loss.
+    apply_loss_weighting(asr_model, cfg)
 
     # --- L2-SP regularization toward pretrained weights ---
     # Must be set up *after* freezing (so we only snapshot trainable params)
