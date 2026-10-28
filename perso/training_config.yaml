@@ -436,6 +436,18 @@ model:
     # ones. Long clips are therefore upweighted about 8x per clip. That is a
     # feature here (long-form is the weak point this fine-tune targets) but it
     # is a real reweighting of the corpus, not a neutral change.
+    # TODO (v2, before the next run): make the cost model see label length.
+    # rnnt_batch_cost (nemo/collections/asr/parts/utils/asr_batching.py) prices
+    # a clip at d^2, which assumes U (tokens) tracks T (frames). The lattice is
+    # [T, U, V], so memory really follows T * U, and dense text breaks the
+    # assumption. Measured 2026-10-28 with perso/oom_margin_check.sh, LONE=40,
+    # one clip per batch: two clips of 39.8 s, one with 264 tokens peaked at
+    # 18058 MiB, one with 319 tokens at 22194 MiB, i.e. +4.1 GB at equal cost.
+    # Tokens per second also differ by voice in v2 (nine readers at different
+    # speaking rates), so d^2 is a looser proxy than it was on one voice.
+    # Switch the per-clip term to d * tokens (or frames * (tokens + 1)),
+    # refit the two weights on this
+    # card, and re-run the OOM ladder before trusting the budget again.
     cost_batching:
       enabled: true
       # 15000 leaves a measured ~2.2 GB of true headroom on the worst possible
