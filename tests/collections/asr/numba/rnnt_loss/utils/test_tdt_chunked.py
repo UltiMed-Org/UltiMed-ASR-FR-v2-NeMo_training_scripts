@@ -252,9 +252,12 @@ def test_long_path_refuses_omega_and_fastemit():
     for kwargs in ({"omega": 0.1}, {"fastemit_lambda": 0.01}):
         joint = _make_joint(0.0, seed=0)
         joint.set_loss(RNNTLoss(num_classes=V - 1, loss_name="tdt", loss_kwargs=dict(durations=DURATIONS, **kwargs)))
+        with pytest.raises(ValueError, match="omega 0"):  # at configuration time
+            joint.set_long_path(0)
+        joint.set_long_path(None)  # off needs nothing
         joint.long_path_min_cells = 0
         enc, dec, labels, act_lens, label_lens = _make_batch(case)
-        with pytest.raises(ValueError, match="omega 0"):
+        with pytest.raises(ValueError, match="omega 0"):  # and if it was bypassed
             joint(
                 encoder_outputs=enc.transpose(1, 2),
                 decoder_outputs=dec.transpose(1, 2),

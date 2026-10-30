@@ -1324,6 +1324,20 @@ def _build(cfg):
             + ("in place" if in_place else "in a separate buffer (omega > 0, see joint.tdt_omega)")
         )
 
+    # --- chunked long-clip TDT loss ---
+    # Off by default (null). A fused sub-batch whose lattice has more than
+    # long_path_min_cells T * (U+1) cells computes the joint one chunk of
+    # long_path_chunk_frames frames at a time over a 2-slot compact lattice
+    # (nemo/collections/asr/losses/tdt_chunked.py) instead of the dense
+    # [T, U+1, V] table. Needs omega 0 (joint.tdt_omega) and FastEmit off:
+    # set_long_path raises here otherwise. Set before the dataloaders, whose
+    # cost sampler reads the threshold to batch those clips alone.
+    long_min_cells = joint_cfg.get("long_path_min_cells") if joint_cfg is not None else None
+    if long_min_cells is not None:
+        chunk_frames = joint_cfg.get("long_path_chunk_frames", None) or 64
+        asr_model.joint.set_long_path(long_min_cells, chunk_frames)
+        logging.info(f"TDT loss: chunked long path above {int(long_min_cells)} cells, {int(chunk_frames)} frames per chunk")
+
     # --- Decide between cached-encoder and standard training ---
     use_cached = cfg.get("use_cached_encoder", False)
 

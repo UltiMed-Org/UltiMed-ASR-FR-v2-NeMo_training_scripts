@@ -295,6 +295,19 @@ model:
     # 0.0; at 0.1 it keeps a separate fp16 grad buffer (~6 bytes per cell
     # instead of ~4), so set 0.0 together with fp16_loss_table.
     tdt_omega: null
+    # Chunked long-clip TDT loss (nemo/collections/asr/losses/tdt_chunked.py):
+    # a fused sub-batch whose lattice has more than long_path_min_cells
+    # T * (U+1) cells (T = encoder frames, 12.5 per second; U = tokens) never
+    # builds the dense [T, U+1, V] table. It computes the joint one chunk of
+    # long_path_chunk_frames frames at a time and runs the TDT kernels on a
+    # 2-slot compact lattice; backward recomputes each chunk (dropout replayed).
+    # Same loss and gradients as the dense path. Needs tdt_omega: 0.0 (the
+    # script refuses otherwise). Those clips are always batched alone by the
+    # cost sampler. null = never (current behaviour). CPU-tested only; GPU
+    # gate pending, see (4) in the TODO below loss_weighting. This does not lift
+    # train_ds.max_duration: the cost model still prices those clips densely.
+    long_path_min_cells: null
+    long_path_chunk_frames: 64
 
   # How the training loss is reduced over a batch.
   #   per_token: sum of clip losses / one constant, the mean clips per training
@@ -346,6 +359,13 @@ model:
   # OVERRIDES="model.joint.fp16_loss_table=true" (commands next to
   # train_ds.max_duration). Expected ~2.5x less table memory, ceiling
   # ~40 s -> ~55-60 s (estimate), and a larger cost budget for every batch.
+  #   (4) DONE on CPU 2026-10-30 Claude Code, behind joint.long_path_min_cells
+  #       (default null): chunked compact-lattice joint+loss for very long
+  #       clips, memory ~O(T * U) instead of O(T * U * V). Tests (simulator):
+  #       tests/collections/asr/numba/rnnt_loss/utils/test_tdt_chunked.py.
+  #       Gate, GPU pending: on a lone 40 s clip with fp16_loss_table off,
+  #       long_path_min_cells=0 vs null must give the same loss to 1e-3,
+  #       then measure peak memory at LONE=80 and 105.
 
   # Training dataset configuration
   train_ds:

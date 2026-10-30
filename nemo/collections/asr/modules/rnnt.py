@@ -1743,13 +1743,20 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         """Whether a fused sub-batch of this lattice size goes through _long_path_loss."""
         return self.long_path_min_cells is not None and max_t * max_u_plus_1 > self.long_path_min_cells
 
-    def _long_path_loss(self, enc, dec, transcripts, enc_lens, transcript_lens):
-        """Per-sample TDT loss of one fused sub-batch through the compact lattice.
+    def set_long_path(self, min_cells: Optional[int], chunk_frames: int = 64):
+        """Enable the chunked long-clip loss above min_cells T * (U+1) cells (None = off).
 
-        Same result as self.loss(self.joint(enc, dec), ...) with reduction None,
-        without the [B, T, U+1, V] table (see losses/tdt_chunked.py).
+        Checks the loss can take it now rather than at the first long clip.
         """
-        from nemo.collections.asr.losses.tdt_chunked import chunked_tdt_joint_loss
+        if chunk_frames < 1:
+            raise ValueError(f"long_path_chunk_frames must be at least 1, got {chunk_frames}")
+        if min_cells is not None:
+            self._long_path_tdt_loss()
+        self.long_path_min_cells = None if min_cells is None else int(min_cells)
+        self.long_path_chunk_frames = int(chunk_frames)
+
+    def _long_path_tdt_loss(self):
+        """The numba TDT loss the long path reads its settings from; raises if it cannot run it."""
         from nemo.collections.asr.parts.numba.rnnt_loss.rnnt_pytorch import TDTLossNumba
 
         tdt = getattr(self.loss, "_loss", None)
@@ -1764,6 +1771,17 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
             )
         if self.is_adapter_available():
             raise ValueError("joint.long_path_min_cells does not run joint adapters")
+        return tdt
+
+    def _long_path_loss(self, enc, dec, transcripts, enc_lens, transcript_lens):
+        """Per-sample TDT loss of one fused sub-batch through the compact lattice.
+
+        Same result as self.loss(self.joint(enc, dec), ...) with reduction None,
+        without the [B, T, U+1, V] table (see losses/tdt_chunked.py).
+        """
+        from nemo.collections.asr.losses.tdt_chunked import chunked_tdt_joint_loss
+
+        tdt = self._long_path_tdt_loss()
         return chunked_tdt_joint_loss(
             self.project_encoder(enc),
             self._mask_prednet(self.project_prednet(dec)),
