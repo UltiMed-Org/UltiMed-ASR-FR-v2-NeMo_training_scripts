@@ -29,6 +29,7 @@ from nemo.collections.asr.parts.utils.asr_batching import (
     DurationCostBatchSampler,
     SemiSortBatchSampler,
     get_duration_cost_batch_sampler,
+    lattice_cells,
     rnnt_batch_cost,
 )
 from nemo.collections.asr.parts.utils.manifest_utils import write_manifest
@@ -278,6 +279,39 @@ class TestASRSamplers:
         batches = [list(b) for b in sampler]
         assert [0] in batches
         assert sorted(i for b in batches for i in b) == [0, 1, 2]
+
+    def test_duration_cost_sampler_sends_solo_clips_alone(self):
+        # The budget would pack all six together; the flagged ones (the joint's
+        # long-path clips) still come out on their own, the rest stay packed.
+        durations = [5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+        solo = [False, True, False, False, True, False]
+        sampler = DurationCostBatchSampler(durations=durations, budget=1e9, solo=solo, shuffle=False)
+        batches = [list(b) for b in sampler]
+        assert [1] in batches and [4] in batches
+        assert sorted(i for b in batches for i in b) == list(range(6))
+        assert max(len(b) for b in batches) > 1
+        with pytest.raises(ValueError, match="one flag per clip"):
+            DurationCostBatchSampler(durations=durations, budget=1e9, solo=[True])
+
+    def test_lattice_cells_counts_encoder_frames_times_labels_plus_one(self):
+        # parakeet: 10 ms hop, 8x subsampling = 0.08 s per frame. 105 s, 700 tokens.
+        assert lattice_cells([105.0], [700], 0.08)[0] == 1313 * 701
+
+    @pytest.mark.unit
+    def test_long_path_threshold_reaches_the_sampler(self):
+        texts = ['a', 'abcdefghij', 'ab']
+        with tempfile.TemporaryDirectory() as test_dir:
+            dataset = self._write_dataset(test_dir, 'solo', [1.0, 1.0, 1.0], texts=texts)
+            cfg = OmegaConf.create({'preprocessor': {'window_stride': 0.01}, 'encoder': {'subsampling_factor': 8}})
+            # 1 s = 13 frames: 13 * 2, 13 * 11 and 13 * 3 cells.
+            model = SimpleNamespace(global_rank=0, world_size=1, cfg=cfg, joint=SimpleNamespace(long_path_min_cells=50))
+            config = {'cost_batching': {'budget': 1e9}, 'shuffle': False}
+            sampler = get_duration_cost_batch_sampler(model, dataset, config)
+            assert list(sampler.solo) == [False, True, False]
+            assert [1] in [list(b) for b in sampler]
+
+            model.joint.long_path_min_cells = None
+            assert get_duration_cost_batch_sampler(model, dataset, config).solo is None
 
     def test_duration_cost_sampler_shards_across_ranks(self):
         durations = self._durations(n=500)

@@ -353,6 +353,22 @@ def rnnt_batch_cost(
     return float(sum_weight * costs.sum() + max_weight * costs.max())
 
 
+def lattice_cells(
+    durations: Union[List[float], np.ndarray],
+    token_counts: Union[List[int], np.ndarray],
+    frame_seconds: float,
+) -> np.ndarray:
+    """Estimated TDT lattice size T * (U+1) of each clip, the quantity RNNTJoint.long_path_min_cells is in.
+
+    Args:
+        durations: clip durations in seconds.
+        token_counts: label length of each clip in tokens.
+        frame_seconds: seconds per encoder output frame (window_stride * subsampling_factor).
+    """
+    frames = np.ceil(np.asarray(durations, dtype=np.float64) / frame_seconds)
+    return frames * (np.asarray(token_counts, dtype=np.float64) + 1.0)
+
+
 def resolve_cost_weights(
     cost_model: str, sum_weight: Optional[float] = None, max_weight: Optional[float] = None
 ) -> Tuple[float, float]:
@@ -401,6 +417,10 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         token_counts: label length in tokens of every sample, in dataset index
             order. Required by the ``duration_tokens`` cost model.
         cost_model: per-clip term of the cost, see ``clip_costs``.
+        solo: one bool per sample, in dataset index order: True samples always
+            get a batch of their own, whatever the budget. Used for the clips
+            the joint sends down its chunked long path (``lattice_cells`` above
+            ``long_path_min_cells``), which the cost model does not price.
     """
 
     def __init__(
@@ -419,6 +439,7 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         max_weight: Optional[float] = None,
         token_counts: Optional[Union[List[int], np.ndarray]] = None,
         cost_model: str = COST_MODEL_DURATION_SQ,
+        solo: Optional[Union[List[bool], np.ndarray]] = None,
     ):
         self.durations = np.asarray(durations, dtype=np.float64)
         if self.durations.ndim != 1 or self.durations.size == 0:
@@ -442,6 +463,9 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         self.token_counts = None if token_counts is None else np.asarray(token_counts, dtype=np.int64)
         # Computed once: the packing loop below only reads it.
         self.clip_costs = clip_costs(self.durations, self.token_counts, cost_model)
+        self.solo = None if solo is None else np.asarray(solo, dtype=bool)
+        if self.solo is not None and self.solo.shape != self.durations.shape:
+            raise ValueError(f"solo has shape {self.solo.shape}, durations {self.durations.shape}: one flag per clip")
         self.epoch = 0
 
         solo_cost = (self.sum_weight + self.max_weight) * self.clip_costs
@@ -465,6 +489,13 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         total_dur = 0.0
 
         for idx in indices:
+            if self.solo is not None and self.solo[idx]:
+                if current:
+                    batches.append(current)
+                batches.append([int(idx)])
+                current, sum_cost, max_cost, total_dur = [], 0.0, 0.0, 0.0
+                continue
+
             duration = float(self.durations[idx])
             cost = float(self.clip_costs[idx])
             new_sum = sum_cost + cost
@@ -568,6 +599,15 @@ def get_duration_cost_batch_sampler(
     # label lengths are free here: no second pass over the corpus.
     token_counts = [len(sample.text_tokens) for sample in samples] if cost_model == COST_MODEL_DURATION_TOKENS else None
 
+    # Clips the joint will run through its chunked long path go alone: the
+    # model's live threshold (set by the training script), not a second key.
+    solo = None
+    min_cells = getattr(getattr(model, 'joint', None), 'long_path_min_cells', None)
+    if min_cells is not None:
+        counts = token_counts if token_counts is not None else [len(sample.text_tokens) for sample in samples]
+        solo = lattice_cells(durations, counts, _encoder_frame_seconds(model)) > min_cells
+        logging.info(f"DurationCostBatchSampler: {int(solo.sum())} clip(s) over {min_cells} lattice cells go alone")
+
     return DurationCostBatchSampler(
         durations=durations,
         budget=cost_cfg.get('budget', 16500),
@@ -583,4 +623,16 @@ def get_duration_cost_batch_sampler(
         max_weight=cost_cfg.get('max_weight', None),
         token_counts=token_counts,
         cost_model=cost_model,
+        solo=solo,
     )
+
+
+def _encoder_frame_seconds(model: ASRModel) -> float:
+    """Seconds per encoder output frame: preprocessor hop times encoder subsampling."""
+    try:
+        return float(model.cfg.preprocessor.window_stride) * float(model.cfg.encoder.subsampling_factor)
+    except (AttributeError, KeyError, TypeError) as e:
+        raise ValueError(
+            "joint.long_path_min_cells needs model.cfg.preprocessor.window_stride and "
+            "model.cfg.encoder.subsampling_factor to price clips in lattice cells"
+        ) from e
