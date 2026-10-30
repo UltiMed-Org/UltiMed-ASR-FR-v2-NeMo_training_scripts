@@ -356,6 +356,16 @@ def assert_effective_values(cfg: DictConfig, asr_model, trainer) -> None:
         _check(failures, "joint.fp16_loss_table", bool(joint_cfg.get("fp16_loss_table")),
                getattr(inner, "fp16_table", False))
 
+    # --- chunked long-clip TDT loss -------------------------------------------
+    # A plain attribute on the joint, set live by the script like the above.
+    if joint_cfg is not None and joint_cfg.get("long_path_min_cells", None) is not None:
+        joint = getattr(asr_model, "joint", None)
+        _check(failures, "joint.long_path_min_cells", int(joint_cfg.get("long_path_min_cells")),
+               getattr(joint, "long_path_min_cells", None))
+        if joint_cfg.get("long_path_chunk_frames", None) is not None:
+            _check(failures, "joint.long_path_chunk_frames", int(joint_cfg.get("long_path_chunk_frames")),
+                   getattr(joint, "long_path_chunk_frames", None))
+
     # --- dataloader knobs NeMo is known to drop -----------------------------
     if train_dl is not None:
         train_ds = cfg.model.train_ds

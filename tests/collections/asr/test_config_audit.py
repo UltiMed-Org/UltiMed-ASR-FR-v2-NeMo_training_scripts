@@ -300,6 +300,18 @@ class TestAssertEffectiveValues:
         with pytest.raises(ConfigAuditError, match="fp16_loss_table"):
             assert_effective_values(_minimal_cfg(**{"model.joint.fp16_loss_table": True}), model, None)
 
+    def test_catches_a_long_path_threshold_the_joint_did_not_take(self):
+        model = _FakeModel()
+        model.joint = types.SimpleNamespace(long_path_min_cells=500000, long_path_chunk_frames=64)
+        cfg = {"model.joint.long_path_min_cells": 500000, "model.joint.long_path_chunk_frames": 64}
+        assert_effective_values(_minimal_cfg(**cfg), model, None)
+        model.joint.long_path_chunk_frames = 32
+        with pytest.raises(ConfigAuditError, match="long_path_chunk_frames"):
+            assert_effective_values(_minimal_cfg(**cfg), model, None)
+        model.joint = types.SimpleNamespace(long_path_min_cells=None, long_path_chunk_frames=64)
+        with pytest.raises(ConfigAuditError, match="long_path_min_cells"):
+            assert_effective_values(_minimal_cfg(**cfg), model, None)
+
     def test_catches_a_partial_freeze_that_did_not_take(self):
         cfg = _minimal_cfg(**{"model.freeze": {"encoder": True, "encoder_except_last_n": 2}})
         model = _FakeModel()
