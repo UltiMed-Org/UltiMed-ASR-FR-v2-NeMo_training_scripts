@@ -589,9 +589,14 @@ class TestTDTLoss:
         assert np.allclose(pt_grads, ag_grads, rtol=1e-2), "td gradient mismatch."
 
     @pytest.mark.unit
-    @pytest.mark.parametrize('device', CUDA_ONLY_DEVICE)
-    def test_case_fixed_case_act_label(self, device):
-        numba_utils.skip_numba_cuda_test_if_unsupported(__NUMBA_MINIMUM_VERSION__)
+    # The pure pytorch reference against the same hand-checked values, on CPU:
+    # it used to hardcode .cuda() and could not run there at all.
+    @pytest.mark.parametrize('device,loss_cls', [('cuda', TDTLossNumba), ('cpu', TDTLossPytorch)])
+    def test_case_fixed_case_act_label(self, device, loss_cls):
+        if device == 'cuda':
+            if not torch.cuda.is_available():
+                pytest.skip("needs CUDA")
+            numba_utils.skip_numba_cuda_test_if_unsupported(__NUMBA_MINIMUM_VERSION__)
 
         B, T, U, V = 1, 3, 2, 3  # here V is number of non blank labels
         durations = [0, 1, 2]
@@ -600,7 +605,7 @@ class TestTDTLoss:
         acts = torch.zeros([B, T, U, V + 1 + len(durations)])
         labels = [[(i + j) % (V - 1) for i in range(U - 1)] for j in range(B)]
 
-        fn_pt = TDTLossNumba(blank=V, reduction='sum', durations=durations, sigma=sigma)
+        fn_pt = loss_cls(blank=V, reduction='sum', durations=durations, sigma=sigma)
         pt_cost, pt_grads = wrap_and_call(fn_pt, acts, labels, device)
 
         expected_cost = 4.155739
