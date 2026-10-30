@@ -32,9 +32,9 @@ usage() {
   print "Everything else is passed straight through to tensorboard; use -- to"
   print "stop option parsing if an argument would otherwise be eaten here."
   print ""
-  print "The log directory is \$NEMO_EXP_DIR, read from the .env file next to"
-  print "this script, so it always matches where training_start.sh writes its"
-  print "checkpoints and event files."
+  print "The log directory is \$NEMO_EXP_DIR/<name>, \$NEMO_EXP_DIR read from the"
+  print ".env file next to this script and <name> from perso/training_config.yaml,"
+  print "so it always matches where training_start.sh writes its event files."
 }
 
 while (( $# > 0 )); do
@@ -77,8 +77,19 @@ cd "${0:A:h}" || exit 1
 # it is not mounted. Shared with training_start.sh on purpose.
 source ./perso/resolve_exp_dir.sh
 
-if [[ ! -d "$NEMO_EXP_DIR" ]]; then
-  print -u2 "ERROR: $NEMO_EXP_DIR does not exist."
+# Serve the experiment's own folder (<exp_dir>/<name>, the layout exp_manager
+# writes), not $NEMO_EXP_DIR itself: that also holds the Common Voice and other
+# downloaded datasets, 400k+ files tensorboard would rescan on every reload,
+# delaying new points and stealing CPU from the training dataloader. The name is
+# read from the training config so the two cannot drift apart.
+exp_name="$(sed -n 's/^name: *"\(.*\)"/\1/p' perso/training_config.yaml)"
+if [[ -z "$exp_name" ]]; then
+  print -u2 "ERROR: no top-level name: in perso/training_config.yaml."
+  exit 1
+fi
+LOGDIR="$NEMO_EXP_DIR/$exp_name"
+if [[ ! -d "$LOGDIR" ]]; then
+  print -u2 "ERROR: $LOGDIR does not exist."
   print -u2 "       There is nothing to show until training has run at least once."
   exit 1
 fi
@@ -86,12 +97,12 @@ fi
 # (N) is the nullglob qualifier: with no match the pattern expands to nothing
 # instead of failing, so an empty run directory is a warning and not an error.
 typeset -a event_files
-event_files=("$NEMO_EXP_DIR"/**/events.out.tfevents.*(N))
+event_files=("$LOGDIR"/**/events.out.tfevents.*(N))
 if (( ${#event_files} == 0 )); then
-  print -u2 "WARNING: no events.out.tfevents.* files under $NEMO_EXP_DIR yet."
+  print -u2 "WARNING: no events.out.tfevents.* files under $LOGDIR yet."
   print -u2 "         Starting anyway, tensorboard picks up a run as it appears."
 else
-  print "Found ${#event_files} tensorboard event file(s) under $NEMO_EXP_DIR"
+  print "Found ${#event_files} tensorboard event file(s) under $LOGDIR"
 fi
 
 print "Serving on:"
@@ -109,4 +120,4 @@ fi
 # which newer setuptools no longer provides; 81.0.0 is the version recorded as
 # known-working here.
 exec uvx --python 3.10.12 --with setuptools==81.0.0 --from tensorboard==2.20.0 \
-  tensorboard --logdir "$NEMO_EXP_DIR" --bind_all --port "$PORT" "${passthrough[@]}"
+  tensorboard --logdir "$LOGDIR" --bind_all --port "$PORT" "${passthrough[@]}"
