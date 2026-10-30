@@ -315,6 +315,17 @@ def test_set_tdt_fp16_table_refuses_other_losses():
         loss.set_tdt_fp16_table(True)
 
 
+@pytest.mark.unit
+def test_set_tdt_omega_overrides_the_restored_value():
+    # The checkpoint ships omega 0.1, which keeps the fp16 table out of place.
+    loss = RNNTLoss(num_classes=8, loss_name="tdt", loss_kwargs={"durations": DURATIONS, "omega": 0.1})
+    assert loss._loss.omega == 0.1
+    loss.set_tdt_omega(0)
+    assert loss._loss.omega == 0.0
+    with pytest.raises(ValueError, match="numba TDT"):
+        RNNTLoss(num_classes=8, loss_name="tdt_pytorch", loss_kwargs={"durations": DURATIONS}).set_tdt_omega(0)
+
+
 if __name__ == "__main__":
     # Simulator subprocess entry point (see _run_simulator).
     params = json.loads(sys.argv[1])

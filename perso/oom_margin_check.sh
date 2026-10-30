@@ -45,7 +45,8 @@
 # which needs U to vary at a fixed d. Raise NEMO_MEM_PROBE to cover every batch.
 #
 # OVERRIDES="key=value ..." appends Hydra overrides to the training command,
-# e.g. OVERRIDES="model.joint.fp16_loss_table=true" for the fp16 TDT table.
+# e.g. OVERRIDES="model.joint.fp16_loss_table=true model.joint.tdt_omega=0.0"
+# for the fp16 TDT table written in place.
 #
 # Usage:  NEMO_EXP_DIR=/tmp/oom_check ./perso/oom_margin_check.sh [cap] [batch]
 #         NEMO_EXP_DIR=/tmp/oom_check BUDGET=25000 ./perso/oom_margin_check.sh 50

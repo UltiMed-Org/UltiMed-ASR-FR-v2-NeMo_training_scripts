@@ -1310,9 +1310,19 @@ def _build(cfg):
     # (no fp32 upcast), runs on one fp16 copy of it with an fp32 lattice, and
     # writes the gradient over that copy: ~4 bytes per [T, U, V] cell instead
     # of ~12. The loss is restored with the checkpoint, so this flips it live.
+    # The table only writes in place at omega 0, and the checkpoint ships
+    # omega 0.1, so tdt_omega (null = keep the checkpoint's) overrides it.
+    tdt_omega = joint_cfg.get("tdt_omega") if joint_cfg is not None else None
+    if tdt_omega is not None:
+        asr_model.loss.set_tdt_omega(tdt_omega)
+        logging.info(f"TDT loss: omega set to {float(tdt_omega)}")
     if joint_cfg is not None and joint_cfg.get("fp16_loss_table", False):
         asr_model.loss.set_tdt_fp16_table(True)
-        logging.info("TDT loss: fp16 table, fp32 lattice, gradient in place")
+        in_place = asr_model.loss._loss.omega == 0.0
+        logging.info(
+            "TDT loss: fp16 table, fp32 lattice, gradient "
+            + ("in place" if in_place else "in a separate buffer (omega > 0, see joint.tdt_omega)")
+        )
 
     # --- Decide between cached-encoder and standard training ---
     use_cached = cfg.get("use_cached_encoder", False)

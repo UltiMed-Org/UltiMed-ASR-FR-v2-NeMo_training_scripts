@@ -289,6 +289,12 @@ model:
     # the bf16 joint as is, runs on one fp16 copy of it with an fp32 lattice
     # and writes the gradient over that copy. Off until the GPU gate passes.
     fp16_loss_table: false
+    # TDT omega: probability per step of training on the plain RNNT loss
+    # instead of TDT (a pretraining regulariser). null keeps the
+    # checkpoint's 0.1. The fp16 table writes its gradient in place only at
+    # 0.0; at 0.1 it keeps a separate fp16 grad buffer (~6 bytes per cell
+    # instead of ~4), so set 0.0 together with fp16_loss_table.
+    tdt_omega: null
 
   # How the training loss is reduced over a batch.
   #   per_token: sum of clip losses / one constant, the mean clips per training
@@ -326,8 +332,8 @@ model:
   #       only rounding is one fp16 rounding of each gradient (2^-11).
   #   (2) DONE on CPU: yes, it can. compute_tdt_grad_kernel now reads the
   #       block-shared blank/label logits before a barrier and zeroes padding
-  #       cells itself, so the gradient overwrites the fp16 copy (omega must
-  #       be 0, it is). Estimate ~4-6 bytes per element (bf16 joint, fp16
+  #       cells itself, so the gradient overwrites the fp16 copy (only at
+  #       omega 0: the checkpoint ships 0.1, see joint.tdt_omega). Estimate ~4-6 bytes per element (bf16 joint, fp16
   #       copy reused as gradient, bf16 backward transients) against ~10,
   #       not measured yet.
   #   (3) not started: profile and tune launch config for our shapes (T up

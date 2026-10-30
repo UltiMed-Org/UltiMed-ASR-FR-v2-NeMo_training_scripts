@@ -441,6 +441,17 @@ class RNNTLoss(Loss):
         self._loss.fp16_table = enabled  # validates numba fp16 support
         self._force_float32 = not enabled
 
+    def set_tdt_omega(self, omega: float):
+        """Set the numba TDT loss's omega (probability of sampling the plain RNNT loss).
+
+        The loss is restored with the checkpoint's tdt_kwargs, so this is the
+        only way to change it on a restored model. The fp16 table writes its
+        gradient in place only at omega 0. Raises for any other loss.
+        """
+        if not hasattr(self._loss, "omega"):
+            raise ValueError(f"omega needs the numba TDT loss, this RNNTLoss runs {type(self._loss).__name__}")
+        self._loss.omega = float(omega)
+
     def reduce(self, losses, target_lengths):
 
         if isinstance(losses, List):
