@@ -44,6 +44,9 @@
 # it is the fixture for refitting the cost model (perso/fit_cost_model.py),
 # which needs U to vary at a fixed d. Raise NEMO_MEM_PROBE to cover every batch.
 #
+# OVERRIDES="key=value ..." appends Hydra overrides to the training command,
+# e.g. OVERRIDES="model.joint.fp16_loss_table=true" for the fp16 TDT table.
+#
 # Usage:  NEMO_EXP_DIR=/tmp/oom_check ./perso/oom_margin_check.sh [cap] [batch]
 #         NEMO_EXP_DIR=/tmp/oom_check BUDGET=25000 ./perso/oom_margin_check.sh 50
 #         NEMO_EXP_DIR=/tmp/oom_check LONE="40,45,50,55,60" ./perso/oom_margin_check.sh
@@ -160,6 +163,9 @@ TOTAL=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head
 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -l 1 > "$VLOG" &
 SAMPLER=$!
 
+read -ra EXTRA <<< "${OVERRIDES:-}"
+[ -n "${OVERRIDES:-}" ] && echo "[oom-check] extra overrides: ${OVERRIDES}"
+
 # One epoch over the fixture is a deliberately truncated run, which the config audit
 # refuses unless told (optim.sched.max_steps describes the real run, not this probe).
 "$PY" examples/asr/speech_to_text_finetune_cached.py \
@@ -176,6 +182,7 @@ SAMPLER=$!
   exp_manager.create_checkpoint_callback=false \
   exp_manager.resume_if_exists=false \
   exp_manager.version=oom_margin_check \
+  ${EXTRA[@]+"${EXTRA[@]}"} \
   > "$LOG" 2>&1
 CODE=$?
 

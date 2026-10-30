@@ -347,6 +347,15 @@ def assert_effective_values(cfg: DictConfig, asr_model, trainer) -> None:
             if cost_cfg.get("cost_model") is not None:
                 _check(failures, "cost_batching.cost_model", cost_cfg.get("cost_model"), sampler.cost_model)
 
+    # --- fp16 TDT loss table -------------------------------------------------
+    # The loss is restored from the checkpoint; this checks the live switch took
+    # (and that nothing rebuilt the loss afterwards, which would drop it).
+    joint_cfg = cfg.model.get("joint", None)
+    if joint_cfg is not None and joint_cfg.get("fp16_loss_table", None) is not None:
+        inner = getattr(getattr(asr_model, "loss", None), "_loss", None)
+        _check(failures, "joint.fp16_loss_table", bool(joint_cfg.get("fp16_loss_table")),
+               getattr(inner, "fp16_table", False))
+
     # --- dataloader knobs NeMo is known to drop -----------------------------
     if train_dl is not None:
         train_ds = cfg.model.train_ds

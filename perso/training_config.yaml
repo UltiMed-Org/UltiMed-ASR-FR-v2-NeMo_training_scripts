@@ -285,6 +285,10 @@ model:
   # for one clip at a time.
   joint:
     fused_batch_size: 1
+    # fp16 TDT loss table (see the TODO below loss_weighting): the loss takes
+    # the bf16 joint as is, runs on one fp16 copy of it with an fp32 lattice
+    # and writes the gradient over that copy. Off until the GPU gate passes.
+    fp16_loss_table: false
 
   # How the training loss is reduced over a batch.
   #   per_token: sum of clip losses / one constant, the mean clips per training
@@ -306,25 +310,36 @@ model:
   loss_weighting:
     mode: per_token
 
-  # TODO (v2, after the dataset): lower the TDT loss table's memory and tune
+  # TODO (v2, GPU pending): lower the TDT loss table's memory and tune
   # its kernel for this card (RTX 3090 Ti, 24 GB, ~1 TB/s). The loss forces
   # an fp32 copy of the joint output plus an fp32 gradient of the same
   # [T, U, V] shape (V = 8198): ~10 bytes per element with the bf16 joint
   # output, ~12 GB of the 23.4 GB peak for a lone 40 s clip. Plan:
-  #   (1) patch the numba TDT kernel (nemo/collections/asr/parts/numba/
-  #       rnnt_loss/) to read fp16 logits and write fp16 gradients while
-  #       keeping alphas, betas and the log-softmax denominators in fp32:
-  #       at 300+ nats a 16-bit accumulator is off by 0.25 (fp16) to 2.0
+  #   (1) DONE on CPU 2026-10-30 with Claude Code, behind
+  #       joint.fp16_loss_table (default false): the numba TDT kernels read
+  #       fp16 logits and write fp16 gradients while alphas, betas, the
+  #       log-softmax denominators and the costs stay fp32 (workspace and
+  #       reduce accumulator no longer take the input dtype). Why fp32: at
+  #       300+ nats a 16-bit accumulator is off by 0.25 (fp16) to 2.0
   #       (bf16) nats, i.e. 1.3x to 7.4x on each gradient cell, a bias that
-  #       accumulation does not average away. Today the workspace takes the
-  #       input dtype, so this is a real kernel change, not a flag.
-  #   (2) check whether the gradient can overwrite the fp32 copy in place.
-  #   (3) profile and tune launch config for our shapes (T up to ~500-750,
-  #       U up to ~300-600, B mostly 1-16) on this card.
-  # Gate: a test that the patched loss and gradients match fp32 to a tight
-  # tolerance on real clips, then re-run perso/oom_margin_check.sh LONE
-  # ladder. Expected ~2.5x less table memory, ceiling ~40 s -> ~55-60 s
-  # (estimate), and a larger cost budget for every batch.
+  #       accumulation does not average away. bf16 -> fp16 is exact, so the
+  #       only rounding is one fp16 rounding of each gradient (2^-11).
+  #   (2) DONE on CPU: yes, it can. compute_tdt_grad_kernel now reads the
+  #       block-shared blank/label logits before a barrier and zeroes padding
+  #       cells itself, so the gradient overwrites the fp16 copy (omega must
+  #       be 0, it is). Estimate ~4-6 bytes per element (bf16 joint, fp16
+  #       copy reused as gradient, bf16 backward transients) against ~10,
+  #       not measured yet.
+  #   (3) not started: profile and tune launch config for our shapes (T up
+  #       to ~500-750, U up to ~300-600, B mostly 1-16) on this card.
+  # Tested so far on CPU only (numba CUDA simulator: fp32 kernel vs the
+  # pytorch reference, fp16 table vs fp32 kernel, in place vs a separate
+  # buffer): tests/collections/asr/numba/rnnt_loss/utils/test_tdt_fp16_table.py.
+  # Gate, GPU pending: the same file's GPU tests at V = 8198, then re-run the
+  # perso/oom_margin_check.sh LONE ladder with
+  # OVERRIDES="model.joint.fp16_loss_table=true" (commands next to
+  # train_ds.max_duration). Expected ~2.5x less table memory, ceiling
+  # ~40 s -> ~55-60 s (estimate), and a larger cost budget for every batch.
 
   # Training dataset configuration
   train_ds:

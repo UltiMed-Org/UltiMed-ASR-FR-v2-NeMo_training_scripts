@@ -291,6 +291,15 @@ class TestAssertEffectiveValues:
                 None,
             )
 
+    def test_catches_an_fp16_loss_table_the_loss_did_not_take(self):
+        # The loss comes back with the checkpoint, so only the live switch
+        # makes the key real; a rebuilt loss would silently drop it.
+        model = _FakeModel()
+        model.loss = types.SimpleNamespace(_loss=types.SimpleNamespace(fp16_table=False))
+        assert_effective_values(_minimal_cfg(**{"model.joint.fp16_loss_table": False}), model, None)
+        with pytest.raises(ConfigAuditError, match="fp16_loss_table"):
+            assert_effective_values(_minimal_cfg(**{"model.joint.fp16_loss_table": True}), model, None)
+
     def test_catches_a_partial_freeze_that_did_not_take(self):
         cfg = _minimal_cfg(**{"model.freeze": {"encoder": True, "encoder_except_last_n": 2}})
         model = _FakeModel()

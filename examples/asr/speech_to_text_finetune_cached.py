@@ -1305,6 +1305,15 @@ def _build(cfg):
             asr_model.cfg.joint.fused_batch_size = fused_bs
         logging.info(f"Joint fused_batch_size set to {fused_bs}")
 
+    # --- fp16 TDT loss table ---
+    # Off by default. When on, the numba TDT loss takes the bf16 joint as is
+    # (no fp32 upcast), runs on one fp16 copy of it with an fp32 lattice, and
+    # writes the gradient over that copy: ~4 bytes per [T, U, V] cell instead
+    # of ~12. The loss is restored with the checkpoint, so this flips it live.
+    if joint_cfg is not None and joint_cfg.get("fp16_loss_table", False):
+        asr_model.loss.set_tdt_fp16_table(True)
+        logging.info("TDT loss: fp16 table, fp32 lattice, gradient in place")
+
     # --- Decide between cached-encoder and standard training ---
     use_cached = cfg.get("use_cached_encoder", False)
 
