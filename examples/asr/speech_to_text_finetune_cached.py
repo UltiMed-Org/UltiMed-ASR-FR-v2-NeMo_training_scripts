@@ -329,6 +329,67 @@ def apply_cost_batch_sampler_to_validation(asr_model, val_cfg):
     asr_model._validation_dl = rebuilt[0] if single else rebuilt
 
 
+def apply_freeze(asr_model, cfg):
+    """Freeze model components as ``cfg.model.freeze`` says; return the frozen modules.
+
+    The caller pins the returned modules to eval (training: _FrozenEvalCallback).
+    Shared with perso/fp16_grad_check.py, so a check sees the same trainable set
+    as training.
+    """
+    # Freeze components according to config (defaults: freeze nothing).
+    # Special handling for the encoder: if `freeze.encoder_except_last_n > 0`
+    # we freeze layers[:L-N] + pre_encode + pos_enc but leave the last N
+    # conformer layers + out_proj trainable.
+    freeze_cfg = cfg.model.get("freeze", {})
+    except_last_n = int(freeze_cfg.get("encoder_except_last_n", 0) or 0)
+
+    frozen_modules = []  # pinned to eval by _FrozenEvalCallback (BN drift fix)
+
+    if freeze_cfg.get("encoder", False) and hasattr(asr_model, "encoder"):
+        encoder = asr_model.encoder
+        if except_last_n <= 0:
+            logging.info("Freezing encoder (full)")
+            encoder.freeze()
+            frozen_modules.append(encoder)
+        else:
+            n_total = len(encoder.layers)
+            if except_last_n >= n_total:
+                raise ValueError(
+                    f"encoder_except_last_n={except_last_n} >= n_layers={n_total}; "
+                    f"either reduce it or set freeze.encoder=false."
+                )
+            n_frozen = n_total - except_last_n
+            for p in encoder.pre_encode.parameters():
+                p.requires_grad_(False)
+            for p in encoder.pos_enc.parameters():
+                p.requires_grad_(False)
+            for layer in encoder.layers[:n_frozen]:
+                for p in layer.parameters():
+                    p.requires_grad_(False)
+                layer.eval()
+            encoder.pre_encode.eval()
+            encoder.pos_enc.eval()
+            frozen_modules.append(encoder.pre_encode)
+            frozen_modules.append(encoder.pos_enc)
+            frozen_modules.extend(encoder.layers[:n_frozen])
+            logging.info(
+                f"Encoder partial freeze: layers[0:{n_frozen}] frozen, "
+                f"layers[{n_frozen}:{n_total}] + out_proj trainable."
+            )
+    else:
+        logging.info("Leaving encoder trainable")
+
+    for component in ("decoder", "joint"):
+        if freeze_cfg.get(component, False) and hasattr(asr_model, component):
+            logging.info(f"Freezing {component}")
+            getattr(asr_model, component).freeze()
+            frozen_modules.append(getattr(asr_model, component))
+        else:
+            logging.info(f"Leaving {component} trainable")
+
+    return frozen_modules
+
+
 def apply_loss_weighting(asr_model, cfg):
     """Make every training token weigh the same, whatever batch it was packed into.
 
@@ -1202,56 +1263,7 @@ def _build(cfg):
     else:
         logging.info("No top-level `decoding` block, keeping the checkpoint's own strategy.")
 
-    # Freeze components according to config (defaults: freeze nothing).
-    # Special handling for the encoder: if `freeze.encoder_except_last_n > 0`
-    # we freeze layers[:L-N] + pre_encode + pos_enc but leave the last N
-    # conformer layers + out_proj trainable.
-    freeze_cfg = cfg.model.get("freeze", {})
-    except_last_n = int(freeze_cfg.get("encoder_except_last_n", 0) or 0)
-
-    frozen_modules = []  # pinned to eval by _FrozenEvalCallback (BN drift fix)
-
-    if freeze_cfg.get("encoder", False) and hasattr(asr_model, "encoder"):
-        encoder = asr_model.encoder
-        if except_last_n <= 0:
-            logging.info("Freezing encoder (full)")
-            encoder.freeze()
-            frozen_modules.append(encoder)
-        else:
-            n_total = len(encoder.layers)
-            if except_last_n >= n_total:
-                raise ValueError(
-                    f"encoder_except_last_n={except_last_n} >= n_layers={n_total}; "
-                    f"either reduce it or set freeze.encoder=false."
-                )
-            n_frozen = n_total - except_last_n
-            for p in encoder.pre_encode.parameters():
-                p.requires_grad_(False)
-            for p in encoder.pos_enc.parameters():
-                p.requires_grad_(False)
-            for layer in encoder.layers[:n_frozen]:
-                for p in layer.parameters():
-                    p.requires_grad_(False)
-                layer.eval()
-            encoder.pre_encode.eval()
-            encoder.pos_enc.eval()
-            frozen_modules.append(encoder.pre_encode)
-            frozen_modules.append(encoder.pos_enc)
-            frozen_modules.extend(encoder.layers[:n_frozen])
-            logging.info(
-                f"Encoder partial freeze: layers[0:{n_frozen}] frozen, "
-                f"layers[{n_frozen}:{n_total}] + out_proj trainable."
-            )
-    else:
-        logging.info("Leaving encoder trainable")
-
-    for component in ("decoder", "joint"):
-        if freeze_cfg.get(component, False) and hasattr(asr_model, component):
-            logging.info(f"Freezing {component}")
-            getattr(asr_model, component).freeze()
-            frozen_modules.append(getattr(asr_model, component))
-        else:
-            logging.info(f"Leaving {component} trainable")
+    frozen_modules = apply_freeze(asr_model, cfg)
 
     if frozen_modules:
         # Lightning re-enables train mode (dropout + BatchNorm stat updates)
