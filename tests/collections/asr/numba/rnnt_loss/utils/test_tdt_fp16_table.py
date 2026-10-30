@@ -251,6 +251,26 @@ def test_fp16_table_in_place_equals_separate_buffer_on_gpu():
 
 @pytest.mark.unit
 @pytest.mark.run_only_on('GPU')
+def test_tdt_label_grads_with_a_frozen_duration_head_on_gpu():
+    """Durations that need no gradient used to leave the kernel without a duration buffer
+    and crash in `flatten_tensor(None)` (fp32 path too, it is upstream's allocation)."""
+    from nemo.collections.asr.parts.numba.rnnt_loss.rnnt_pytorch import _TDTNumba
+
+    _skip_without_fp16_numba_cuda()
+    logits, labels, act_lens, label_lens, blank = _gpu_batch(seed=2)
+    V = logits.shape[-1] - len(DURATIONS)
+    durations_logprobs = torch.log_softmax(logits[..., V:], dim=-1).contiguous()
+    assert not durations_logprobs.requires_grad
+    label_acts = logits[..., :V].contiguous().requires_grad_(True)
+    cost = _TDTNumba.apply(
+        label_acts, durations_logprobs, labels, act_lens, label_lens, blank, DURATIONS, "none", 0.0, 0.0, SIGMA, 0.0, False
+    )
+    cost.sum().backward()
+    assert torch.isfinite(label_acts.grad).all() and label_acts.grad.abs().sum() > 0
+
+
+@pytest.mark.unit
+@pytest.mark.run_only_on('GPU')
 def test_rnnt_loss_keeps_the_bf16_joint_with_fp16_table():
     _skip_without_fp16_numba_cuda()
     logits, labels, act_lens, label_lens, blank = _gpu_batch(T=40, U=12, act_lens=(40, 31), label_lens=(11, 7))

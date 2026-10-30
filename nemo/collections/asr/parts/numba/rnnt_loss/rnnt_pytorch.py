@@ -150,7 +150,12 @@ class _TDTNumba(Function):
             label_grads = label_acts
         else:
             label_grads = torch.zeros_like(label_acts)
-        duration_grads = torch.zeros_like(duration_acts) if duration_acts.requires_grad else None
+        # The kernel writes both gradients in one pass, so it needs a duration buffer whenever
+        # it computes label gradients at all. Upstream allocated one only when the durations
+        # required grad, and a frozen duration head (or a test feeding plain log-probs) then
+        # crashed in `flatten_tensor(None)`. Autograd drops the gradient of an input that does
+        # not require one.
+        duration_grads = torch.zeros_like(duration_acts) if label_grads is not None or duration_acts.requires_grad else None
         minibatch_size = label_acts.size(0)
         # fp32 costs for an fp16 table: they are copied from the fp32 log-likelihoods.
         costs_dtype = torch.float32 if label_acts.dtype == torch.float16 else label_acts.dtype
