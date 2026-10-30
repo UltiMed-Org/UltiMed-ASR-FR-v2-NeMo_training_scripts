@@ -266,6 +266,7 @@ def tdt_loss_gpu(
         label_lengths: Lengths of the target sequence as a vector of ints [B].
         costs: Zero vector of length [B] in which costs will be set.
         label_grads: Zero tensor of shape [B, T, U, V] where the gradient to label_acts will be set.
+            May be label_acts itself (only with omega == 0): the gradient then overwrites the logits.
         duration_grads: Zero tensor of shape [B, T, U, D] where the gradient to duration_acts will be set.
         blank_label: Index of the standard blank token in the vocabulary.
         durations: A list of supported durations for TDT. Must include 0 and 1.
@@ -299,7 +300,13 @@ def tdt_loss_gpu(
 
     # Select GPU index
     cuda.select_device(label_acts.device.index)
-    gpu_workspace = torch.zeros(gpu_size, device=label_acts.device, dtype=label_acts.dtype, requires_grad=False)
+    # The workspace holds the log-softmax denominators, alphas, betas and the
+    # log-likelihoods. With an fp16 table they stay fp32: a 16-bit accumulator
+    # over a 300+ nat lattice is off by ~0.25 nats (fp16), a 1.3x error on
+    # every gradient cell, which accumulation does not average away. It is
+    # only [B, T, U] sized, so fp32 costs nothing next to the [B, T, U, V] table.
+    workspace_dtype = torch.float32 if label_acts.dtype == torch.float16 else label_acts.dtype
+    gpu_workspace = torch.zeros(gpu_size, device=label_acts.device, dtype=workspace_dtype, requires_grad=False)
 
     tdt_workspace = torch.zeros(len(durations), device=label_acts.device, dtype=torch.long, requires_grad=False)
 

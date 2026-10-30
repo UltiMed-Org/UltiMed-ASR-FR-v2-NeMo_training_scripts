@@ -1320,15 +1320,28 @@ def compute_tdt_grad_kernel(
     # Buffered gradient calculations, broadcast across B=b, T=t and U=u, looped over V with some constant stride.
     # Look up gradient calculation from rnnt_numpy.compute_gradient()
 
-    if t < T and u < U:
-        logpk_blank = (
-            denom[col] + acts[col * alphabet_size + blank_] - sigma
-        )  # whenever sigma is used, it is for logit under-normalization.
+    # `label_grads` may be `acts` itself (the fp16 table path writes the
+    # gradient over its own logits to save a [B, T, U, V] buffer). Every cell
+    # a thread reads besides its own column is read here, then the block
+    # syncs before anyone writes: the blank and label[u] logits are shared by
+    # the whole block, and without the barrier a fast warp could overwrite
+    # them with a gradient before a slow warp has read them. Both reads are in
+    # bounds for any col, so they run unconditionally and the barrier sits
+    # outside every branch (a 0.0 placeholder would also be typed float64 by
+    # numba and drag the fp32 math into fp64); off-lattice they go unused.
+    in_lattice = t < T and u < U
+    logpk_blank = (
+        denom[col] + acts[col * alphabet_size + blank_] - sigma
+    )  # whenever sigma is used, it is for logit under-normalization.
+    label_u = labels[u] if u < U - 1 else blank_  # labels has maxU - 1 entries
+    logpk_label_u = denom[col] + acts[col * alphabet_size + label_u]  # log Pr(label[u] | t, u), no sigma
+    cuda.syncthreads()
 
+    if in_lattice:
         if idx < num_durations:
             grad = 0.0
             if t + durations[idx] < T and u < U - 1:  # for label
-                logpk_label = denom[col] + acts[col * alphabet_size + labels[u]] - sigma
+                logpk_label = logpk_label_u - sigma
                 grad -= math.exp(alphas[col] + betas[col + 1 + durations[idx] * maxU] + logpk_label - logll[mb])
 
             if t + durations[idx] < T and durations[idx] > 0:  # for blank in the middle
@@ -1366,7 +1379,7 @@ def compute_tdt_grad_kernel(
                     if t + durations[i] < T:
                         fastemit_grad += fastemit_lambda * math.exp(
                             alphas[col]  # alphas(t, u)
-                            + (denom[col] + acts[col * alphabet_size + labels[u]])  # log prob of token emission
+                            + logpk_label_u  # log prob of token emission
                             + duration_acts[col * num_durations + i]  # duration log-prob
                             + betas[col + 1 + durations[i] * maxU]  # betas(t, u+1)
                             + logpk  # log Pr(k|t, u)
@@ -1436,4 +1449,10 @@ def compute_tdt_grad_kernel(
 
             # update internal index through the thread_buffer;
             # until idx < V + 1, such that entire vocabulary has been updated.
+            idx += GPU_RNNT_THREAD_SIZE
+    else:
+        # Padding cell: its gradient is zero. The caller usually hands in a
+        # zeroed buffer, but an in-place `label_grads` still holds logits here.
+        while idx < alphabet_size:
+            label_grads[col * alphabet_size + idx] = 0.0
             idx += GPU_RNNT_THREAD_SIZE

@@ -593,9 +593,16 @@ class GPUTDT(GPURNNT):
             An enum that either represents a successful RNNT operation or failure.
         """
         training = label_grads is not None
+        # In place: the gradient overwrites the logits (compute_tdt_grad_kernel
+        # reads what it shares before writing, and zeroes padding cells itself).
+        in_place = training and label_grads.data_ptr() == label_acts.data_ptr()
+        if in_place and self.omega > 0.0:
+            # omega samples the plain RNNT grad kernel, which has neither guarantee.
+            raise ValueError("In-place TDT gradients need omega == 0.")
 
         if training:
-            label_grads *= 0.0  # zero grads
+            if not in_place:
+                label_grads *= 0.0  # zero grads
             duration_grads *= 0.0  # zero grads
 
         _, (denom, alphas, betas, llForward, llBackward, durations) = self._prepare_workspace()

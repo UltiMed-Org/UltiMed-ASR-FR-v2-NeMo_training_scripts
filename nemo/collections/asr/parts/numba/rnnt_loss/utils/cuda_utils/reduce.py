@@ -147,7 +147,9 @@ def _reduce_rows(I_opid: int, R_opid: int, acts, output, num_rows: int):
     col = cuda.blockIdx.x
 
     # allocate shared thread memory
-    storage = cuda.shared.array(shape=(CTA_REDUCE_SIZE,), dtype=acts.dtype)
+    # Accumulate in the output's dtype: an fp16 table with an fp32 denominator
+    # must not sum 8198 exps in fp16. Same dtype as acts on every other path.
+    storage = cuda.shared.array(shape=(CTA_REDUCE_SIZE,), dtype=output.dtype)
 
     max = output[col]
 
@@ -212,7 +214,9 @@ def _reduce_minus(I_opid: int, R_opid: int, acts, output, num_rows: int):
     col = cuda.blockIdx.x
 
     # allocate shared thread memory
-    storage = cuda.shared.array(shape=(CTA_REDUCE_SIZE,), dtype=acts.dtype)
+    # Accumulate in the output's dtype: an fp16 table with an fp32 denominator
+    # must not sum 8198 exps in fp16. Same dtype as acts on every other path.
+    storage = cuda.shared.array(shape=(CTA_REDUCE_SIZE,), dtype=output.dtype)
 
     max = output[col]
 
