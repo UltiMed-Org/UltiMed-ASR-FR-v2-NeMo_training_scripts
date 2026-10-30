@@ -290,14 +290,14 @@ COST_MODEL_DURATION_SQ = "duration_sq"
 COST_MODEL_DURATION_TOKENS = "duration_tokens"
 
 # (sum_weight, max_weight) per cost model.
-# duration_tokens: TODO GPU refit pending (perso/fit_cost_model.py). Until then
-# these are the duration_sq weights x 0.184, the ratio sum(d^2) / sum(d*(U+1))
-# over the v2 train manifest's 21,594 clips >= 30 s (0.178 over all 473,072
-# clips; mean 5.4 tokens/s on the long ones, 5.7 overall). So a long clip read
-# at the corpus rate costs what it did under duration_sq, and a dense one more.
+# duration_tokens: fitted 2026-10-30 by perso/fit_cost_model.py on an RTX 3090 Ti
+# with joint.fp16_loss_table and tdt_omega 0.0 (lone clips 20-70 s plus the
+# SPREAD frontier, 171 batches): peak = 4035 + 0.2802*sum + 0.1696*max MiB, rms
+# residual 288 MiB (duration_sq: 1027). Scaled so budget 15000 lands at 21800 MiB.
+# Refit if the loss table, omega or card changes.
 COST_MODEL_WEIGHTS = {
     COST_MODEL_DURATION_SQ: (4.0, 6.0),
-    COST_MODEL_DURATION_TOKENS: (0.74, 1.10),
+    COST_MODEL_DURATION_TOKENS: (0.2366, 0.1432),
 }
 _COST_SUM_WEIGHT, _COST_MAX_WEIGHT = COST_MODEL_WEIGHTS[COST_MODEL_DURATION_SQ]
 

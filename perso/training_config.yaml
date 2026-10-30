@@ -287,14 +287,17 @@ model:
     fused_batch_size: 1
     # fp16 TDT loss table (see the TODO below loss_weighting): the loss takes
     # the bf16 joint as is, runs on one fp16 copy of it with an fp32 lattice
-    # and writes the gradient over that copy. Off until the GPU gate passes.
-    fp16_loss_table: false
+    # and writes the gradient over that copy. GPU gate passed 2026-10-30
+    # (perso/fp16_grad_check.py on 1-4 clips of 5-37 s: identical losses, every
+    # gradient group within 0.1% in norm; lone 37 s peak 14.7 -> 6.3 GiB).
+    fp16_loss_table: true
     # TDT omega: probability per step of training on the plain RNNT loss
     # instead of TDT (a pretraining regulariser). null keeps the
     # checkpoint's 0.1. The fp16 table writes its gradient in place only at
     # 0.0; at 0.1 it keeps a separate fp16 grad buffer (~6 bytes per cell
-    # instead of ~4), so set 0.0 together with fp16_loss_table.
-    tdt_omega: null
+    # instead of ~4), so set 0.0 together with fp16_loss_table. 0.0 since
+    # 2026-10-30: the cost weights and max_duration below were measured at 0.0.
+    tdt_omega: 0.0
     # Chunked long-clip TDT loss (nemo/collections/asr/losses/tdt_chunked.py):
     # a fused sub-batch whose lattice has more than long_path_min_cells
     # T * (U+1) cells (T = encoder frames, 12.5 per second; U = tokens) never
@@ -329,7 +332,7 @@ model:
   loss_weighting:
     mode: per_token
 
-  # TODO (v2, GPU pending): lower the TDT loss table's memory and tune
+  # TODO (v2, (3) and the (4) gate left): lower the TDT loss table's memory and tune
   # its kernel for this card (RTX 3090 Ti, 24 GB, ~1 TB/s). The loss forces
   # an fp32 copy of the joint output plus an fp32 gradient of the same
   # [T, U, V] shape (V = 8198): ~10 bytes per element with the bf16 joint
@@ -354,11 +357,10 @@ model:
   # Tested so far on CPU only (numba CUDA simulator: fp32 kernel vs the
   # pytorch reference, fp16 table vs fp32 kernel, in place vs a separate
   # buffer): tests/collections/asr/numba/rnnt_loss/utils/test_tdt_fp16_table.py.
-  # Gate, GPU pending: the same file's GPU tests at V = 8198, then re-run the
-  # perso/oom_margin_check.sh LONE ladder with
-  # OVERRIDES="model.joint.fp16_loss_table=true" (commands next to
-  # train_ds.max_duration). Expected ~2.5x less table memory, ceiling
-  # ~40 s -> ~55-60 s (estimate), and a larger cost budget for every batch.
+  # Gate PASSED on the GPU 2026-10-30: perso/fp16_grad_check.py (identical
+  # losses, gradients within 0.1% in norm, cosine >= 0.999 per group) and the
+  # LONE ladder (lone 40 s 23268 -> 10850 MiB, i.e. ~2.1x less; 70 s now fits),
+  # so fp16_loss_table is on and max_duration went 38 -> 70.
   #   (4) DONE on CPU 2026-10-30 Claude Code, behind joint.long_path_min_cells
   #       (default null): chunked compact-lattice joint+loss for very long
   #       clips, memory ~O(T * U) instead of O(T * U * V). Tests (simulator):
@@ -516,8 +518,7 @@ model:
     # clip's tokens weigh up to 16x a short clip's (alone: 1, one of 16: 1/16),
     # so the batch budget silently set the corpus mix. Now per_token.
     #
-    # TODO (v2, before the next run, GPU pending): make the cost model see
-    # label length.
+    # DONE 2026-10-30 (was a TODO): make the cost model see label length.
     # rnnt_batch_cost (nemo/collections/asr/parts/utils/asr_batching.py) prices
     # a clip at d^2, which assumes U (tokens) tracks T (frames). The lattice is
     # [T, U, V], so memory really follows T * U, and dense text breaks the
@@ -539,8 +540,9 @@ model:
     # 5.11 for h_frf_ptm to 6.37 for fr_female), and sum d(U+1) / sum d^2 is
     # 0.178 overall, 0.184 on clips >= 30 s, so the placeholder
     # duration_tokens weights in asr_batching.py are 4 and 6 times 0.184
-    # (0.74, 1.10). They are NOT fitted: do not switch before the refit.
-    # GPU pending, ~10 min per oom run (scratch dir of your choice):
+    # (0.74, 1.10). Refitted on the GPU 2026-10-30 (fp16 table, omega 0, lone
+    # clips 20-70 s): duration_tokens won, see cost_model below. To refit, ~10 min
+    # per oom run (scratch dir of your choice):
     #   NEMO_EXP_DIR=<scratch> LONE="20,25,30,35,38" SPREAD=1 NEMO_MEM_PROBE=200 \
     #     ./perso/oom_margin_check.sh | tee refit_lone.log
     #   NEMO_EXP_DIR=<scratch> SPREAD=1 NEMO_MEM_PROBE=200 \
@@ -552,10 +554,11 @@ model:
     # (no SPREAD) before trusting the budget.
     cost_batching:
       enabled: true
-      # Per-clip cost term, see the TODO above. duration_sq until the refit.
-      # sum_weight / max_weight (unset = the model's defaults in asr_batching.py,
-      # 4 and 6 for duration_sq) go next to it once fitted.
-      cost_model: duration_sq
+      # Per-clip cost term, see the note above. duration_tokens since the
+      # 2026-10-30 refit (rms residual 288 MiB vs 1027 for duration_sq). Its
+      # weights are the defaults in asr_batching.py (0.2366, 0.1432), fitted with
+      # joint.fp16_loss_table and tdt_omega 0.0: refit if either changes.
+      cost_model: duration_tokens
       # 15000 leaves a measured ~2.2 GB of true headroom on the worst possible
       # batch mix. Verified two ways, because nvidia-smi lies here: it reports
       # ~23.6 of 24.5 GB, but that is the caching allocator holding freed blocks,
@@ -584,22 +587,24 @@ model:
 
     # Max duration in seconds. With cost batching this is no longer the OOM
     # guard (the budget is). It is the point past which a clip cannot be trained
-    # on this card even on its own: 40 s alone peaks at 23409 MiB, and 45 s
-    # alone OOMs, needing 5.18 GiB more than the card has.
+    # on this card even on its own. Lone-clip ladder 2026-10-30 (fp16 loss table,
+    # omega 0, perso/oom_margin_check.sh LONE=d): 40 s 10850 MiB, 50 s 12972,
+    # 60 s 15862, 70 s 18257, 75 s 22049 of 24564 (fp32 table at 40 s: 23268).
+    # 70 keeps >6 GB of margin while 75 is already down to 2.5 GB.
     #
-    # Tie it to the budget: a clip alone costs 10 * d^2, so the largest clip the
-    # budget can hold is sqrt(budget / 10) = 38.7 s at budget 15000. 38.0 keeps
-    # a little slack. The sampler warns at startup if any clip exceeds that, and
-    # emits it alone anyway, which may OOM, so change the two together.
+    # Tied to the budget: under duration_tokens a clip alone costs
+    # (0.2366 + 0.1432) * d * (U + 1), so a 70 s clip at the p95 rate of 6.76
+    # tokens/s costs ~12600, under the 15000 budget. The sampler warns at
+    # startup if any clip alone exceeds the budget, and emits it alone anyway,
+    # which may OOM, so change the two together.
     #
-    # 38 s keeps 487,873 clips / 2,429.6 h, i.e. 96.6% of the hours, against
-    # 86.8% at the old 25 s cap. PARHAF (hospital reports, median 29.9 s) goes
-    # from keeping 18.6% of its hours to 69.0%, so long-form training data goes
-    # from 51 h to 190 h.
+    # On the v2 train manifest (2,829.3 h): 38 s kept 2,668.7 h (94.3%) and
+    # PARHAF 53.4% of its 307.1 h; 70 s keeps 485,570 clips / 2,824.6 h (99.8%)
+    # and PARHAF 98.5%. The 221 clips above (4.7 h, up to 115 s) need the long
+    # path (joint.long_path_min_cells), whose GPU parity gate is still pending.
     #
-    # Validation is NOT capped and still sees clips up to 44.8 s; that path runs
-    # without gradients and peaks at 17.9 GB, so it is safe.
-    max_duration: 38.0
+    # Validation is NOT capped; it runs without gradients.
+    max_duration: 70.0
     min_duration: 1.0
 
     shuffle: true
@@ -1849,27 +1854,10 @@ exp_manager:
   #            and they exist because the pooled QC flag rate spans 14x
   #            across the voices (fr_female 0.300% to h_itf_def 4.260%), so
   #            one voice can rot without moving a pooled WER;
-  #        (4) max_duration: TODO, still 38.0 below. The cost sampler emits
-  #            an oversized clip alone, so a longer cap costs nothing on the
-  #            other batch shapes; what it costs on a lone clip is measured
-  #            with `perso/oom_margin_check.sh` (LONE mode, NEMO_MEM_PROBE)
-  #            and the cap follows that measurement.
-  #            GPU pending (2026-10-30): the ladder to run, one duration per
-  #            invocation and ascending, because the fixture puts the longest
-  #            clips first and the first OOM ends the run (~10 min each; the
-  #            train manifest has 1209 clips at 39-40 s, 384 at 49-50 s and
-  #            140 at 59-60 s, so every rung has its 20 clips):
-  #              for d in 40 45 50 55 60; do
-  #                NEMO_EXP_DIR=<scratch> LONE=$d \
-  #                  OVERRIDES="model.joint.fp16_loss_table=true" \
-  #                  ./perso/oom_margin_check.sh | tee lone_fp16_$d.log || break
-  #              done
-  #            plus `NEMO_EXP_DIR=<scratch> LONE=40 ./perso/oom_margin_check.sh`
-  #            without OVERRIDES as the fp32 baseline on the same clips. The
-  #            cap is the longest rung that PASSes with >= ~1000 MiB margin.
-  #            Raising it also needs joint.fp16_loss_table: true, and a cap
-  #            above sqrt(15000 / 10) = 38.7 s is safe at budget 15000 only
-  #            because oversized clips come out alone.
+  #        (4) max_duration 38 -> 70 (2026-10-30), from the lone-clip ladder
+  #            run with joint.fp16_loss_table on; numbers next to
+  #            train_ds.max_duration. The cost sampler emits an oversized clip
+  #            alone, so the longer cap costs nothing on the other batch shapes.
   #        (5) model.loss_weighting: per_token. The loss over a batch is
   #            its summed clip losses over one constant instead of its own
   #            clip count, so a lone long clip's tokens no longer weigh up
