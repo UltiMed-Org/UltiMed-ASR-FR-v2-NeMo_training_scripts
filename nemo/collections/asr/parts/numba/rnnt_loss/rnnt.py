@@ -252,6 +252,7 @@ def tdt_loss_gpu(
     num_threads: int,
     sigma: float,
     omega: float,
+    log_probs_input: bool = False,
 ):
     """
     Wrapper method for accessing GPU TDT loss (https://arxiv.org/abs/2304.06795).
@@ -277,6 +278,8 @@ def tdt_loss_gpu(
         sigma: logit-undernormalization weight used in the multi-blank model. Refer to
             the multi-blank paper https://arxiv.org/abs/2304.06795 for detailed explanations.
         omega: weight for regular RNN-T loss
+        log_probs_input: label_acts hold log-probabilities already, skip the log-softmax
+            (see GPUTDT). The workspace below is zeroed, which is what makes that work.
     """
     minibatch_size = label_acts.shape[0]
     maxT = label_acts.shape[1]
@@ -332,6 +335,7 @@ def tdt_loss_gpu(
         stream=stream,
         sigma=sigma,
         omega=omega,
+        log_probs_input=log_probs_input,
     )
 
     if label_grads is None:

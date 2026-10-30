@@ -526,6 +526,7 @@ class GPUTDT(GPURNNT):
         clamp: float,
         num_threads: int,
         stream,
+        log_probs_input: bool = False,
     ):
         """
         Helper class to launch the CUDA Kernels to compute TDT Loss (https://arxiv.org/pdf/2211.03541).
@@ -548,10 +549,15 @@ class GPUTDT(GPURNNT):
             clamp: Float value. When set to value >= 0.0, will clamp the gradient to [-clamp, clamp].
             num_threads: Number of OMP threads to launch.
             stream: Numba Cuda Stream.
+            log_probs_input: label_acts already hold log-probabilities normalised over the
+                full vocabulary (the compact 2-slot table of losses/tdt_chunked.py). The
+                log-softmax is skipped and the denominators stay at the zeros the workspace
+                arrives with, so every kernel reads logp = acts unchanged.
         """
         super().__init__(
             minibatch, maxT, maxU, alphabet_size, workspace, blank, fastemit_lambda, clamp, num_threads, stream
         )
+        self.log_probs_input = log_probs_input
         self.tdt_workspace = cuda.as_cuda_array(
             tdt_workspace
         )  # a flat vector of integer numbers that represents allocated memory slices
@@ -608,7 +614,8 @@ class GPUTDT(GPURNNT):
         _, (denom, alphas, betas, llForward, llBackward, durations) = self._prepare_workspace()
 
         ######## START EXECUTION ########
-        self.log_softmax(label_acts, denom)
+        if not self.log_probs_input:
+            self.log_softmax(label_acts, denom)
 
         r = random.uniform(0, 1)
         if r < self.omega:
