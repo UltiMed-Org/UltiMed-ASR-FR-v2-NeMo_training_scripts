@@ -16,8 +16,6 @@
 #     through TDTLossNumba and RNNTLoss, at the real vocabulary size.
 
 import json
-import os
-import subprocess
 import sys
 
 import numpy as np
@@ -26,6 +24,7 @@ import torch
 
 from nemo.collections.asr.losses.rnnt import RNNTLoss
 from nemo.core.utils import numba_utils
+from tests.collections.asr.numba.rnnt_loss.utils import tdt_simulator
 
 DURATIONS = [0, 1, 2, 3, 4]
 SIGMA = 0.05
@@ -39,32 +38,12 @@ def _simulate(case, fastemit_lambda, clamp):
     """Runs in the simulator subprocess. Returns {name: np.ndarray}."""
     from numba import cuda
 
-    # The simulator has no __cuda_array_interface__ bridge: hand it host arrays.
-    cuda.as_cuda_array = lambda x, *args, **kwargs: x
-
     from nemo.collections.asr.losses.rnnt_pytorch import TDTLossPytorch
     from nemo.collections.asr.parts.numba.rnnt_loss.utils import rnnt_helper
     from nemo.collections.asr.parts.numba.rnnt_loss.utils.cuda_utils import gpu_rnnt
 
-    def host_log_softmax(self, acts, denom):
-        rows = np.asarray(acts, dtype=np.float64).reshape(-1, self.alphabet_size_)
-        top = rows.max(axis=1)
-        denom[:] = -(top + np.log(np.exp(rows - top[:, None]).sum(axis=1)))
-
-    gpu_rnnt.GPURNNT.log_softmax = host_log_softmax
-
-    from numba.cuda.simulator.cudadrv.devicearray import FakeCUDAArray
-
-    class DeviceBuffer(FakeCUDAArray):
-        # A host array is copied in and out per argument, so passing one twice
-        # would not alias; one fake device array passed twice does. GPUTDT
-        # tells "in place" from the data pointer, as on torch tensors.
-        def data_ptr(self):
-            return self._ary.__array_interface__["data"][0]
-
-        def __imul__(self, other):
-            self._ary *= other
-            return self
+    tdt_simulator.install()
+    DeviceBuffer = tdt_simulator.DeviceBuffer
 
     T, U, V = case["T"], case["U"], case["V"]
     B = len(case["act_lens"])
@@ -138,12 +117,7 @@ def _simulate(case, fastemit_lambda, clamp):
 
 
 def _run_simulator(tmp_path, fastemit_lambda, clamp):
-    out = tmp_path / "sim.npz"
-    env = dict(os.environ, NUMBA_ENABLE_CUDASIM="1", CUDA_VISIBLE_DEVICES="")
-    args = json.dumps({"out": str(out), "fastemit_lambda": fastemit_lambda, "clamp": clamp})
-    proc = subprocess.run([sys.executable, __file__, args], env=env, capture_output=True, text=True, timeout=900)
-    assert proc.returncode == 0, proc.stderr[-4000:]
-    return dict(np.load(out))
+    return tdt_simulator.run_in_simulator(__file__, {"fastemit_lambda": fastemit_lambda, "clamp": clamp}, tmp_path)
 
 
 def _padding_mask(case):
