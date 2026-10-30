@@ -343,6 +343,9 @@ def assert_effective_values(cfg: DictConfig, asr_model, trainer) -> None:
             _check(failures, "cost_batching.budget", cost_cfg.get("budget"), sampler.budget)
             _check(failures, "cost_batching.max_batch_size",
                    cost_cfg.get("max_batch_size"), sampler.max_batch_size)
+            # The budget only means something under the cost model it was set for.
+            if cost_cfg.get("cost_model") is not None:
+                _check(failures, "cost_batching.cost_model", cost_cfg.get("cost_model"), sampler.cost_model)
 
     # --- dataloader knobs NeMo is known to drop -----------------------------
     if train_dl is not None:

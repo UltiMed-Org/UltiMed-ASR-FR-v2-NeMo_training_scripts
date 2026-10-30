@@ -272,6 +272,25 @@ class TestAssertEffectiveValues:
         cfg = _minimal_cfg(macro_metrics=[{"name": "combined", "sources": ["fleurs_frval_wer"]}])
         assert_effective_values(cfg, _FakeModel(), trainer=None)
 
+    def test_catches_a_cost_model_the_sampler_did_not_take(self):
+        # The budget is in the cost model's own unit: a duration_tokens budget
+        # charged under duration_sq is a different memory ceiling, silently.
+        from nemo.collections.asr.parts.utils.asr_batching import DurationCostBatchSampler
+
+        cost = {"enabled": True, "budget": 15000, "max_batch_size": 16}
+        model = _FakeModel()
+        model._train_dl = _FakeTrainDataLoader(1)
+        model._train_dl.batch_sampler = DurationCostBatchSampler(durations=[10.0], budget=15000)
+        assert_effective_values(
+            _minimal_cfg(**{"model.train_ds.cost_batching": dict(cost, cost_model="duration_sq")}), model, None
+        )
+        with pytest.raises(ConfigAuditError, match="cost_model"):
+            assert_effective_values(
+                _minimal_cfg(**{"model.train_ds.cost_batching": dict(cost, cost_model="duration_tokens")}),
+                model,
+                None,
+            )
+
     def test_catches_a_partial_freeze_that_did_not_take(self):
         cfg = _minimal_cfg(**{"model.freeze": {"encoder": True, "encoder_except_last_n": 2}})
         model = _FakeModel()
