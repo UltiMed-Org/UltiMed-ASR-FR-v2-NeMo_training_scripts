@@ -294,6 +294,12 @@ def main():
         model, _ = load_base_model(cfg)
     model = model.to(device)
     model.eval()  # identical activations in both passes; gradients stay on
+    # cuDNN refuses an RNN backward in eval mode, so the prediction net's LSTMs go back
+    # to train mode with their inter-layer dropout zeroed: same activations, backward ok.
+    for module in model.modules():
+        if isinstance(module, torch.nn.RNNBase):
+            module.train()
+            module.dropout = 0.0
     torch.set_grad_enabled(True)
     apply_freeze(model, cfg)
 
