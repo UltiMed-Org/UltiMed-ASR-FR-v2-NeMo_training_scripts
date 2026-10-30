@@ -490,7 +490,8 @@ model:
     # clip's tokens weigh up to 16x a short clip's (alone: 1, one of 16: 1/16),
     # so the batch budget silently set the corpus mix. Now per_token.
     #
-    # TODO (v2, before the next run): make the cost model see label length.
+    # TODO (v2, before the next run, GPU pending): make the cost model see
+    # label length.
     # rnnt_batch_cost (nemo/collections/asr/parts/utils/asr_batching.py) prices
     # a clip at d^2, which assumes U (tokens) tracks T (frames). The lattice is
     # [T, U, V], so memory really follows T * U, and dense text breaks the
@@ -502,8 +503,33 @@ model:
     # Switch the per-clip term to d * tokens (or frames * (tokens + 1)),
     # refit the two weights on this
     # card, and re-run the OOM ladder before trusting the budget again.
+    #
+    # DONE on CPU 2026-10-30 with Claude Code: cost_model below picks the
+    # per-clip term, duration_sq (d^2, the default, unchanged behaviour) or
+    # duration_tokens (d * (U + 1), U = BPE tokens). The token counts are free:
+    # NeMo tokenizes every transcript at manifest load, the sampler reads them
+    # off the collection. On the v2 train manifest (473,072 clips, parakeet v3
+    # tokenizer) the corpus runs 5.67 tokens/s (p5 4.48, p95 6.76; per voice
+    # 5.11 for h_frf_ptm to 6.37 for fr_female), and sum d(U+1) / sum d^2 is
+    # 0.178 overall, 0.184 on clips >= 30 s, so the placeholder
+    # duration_tokens weights in asr_batching.py are 4 and 6 times 0.184
+    # (0.74, 1.10). They are NOT fitted: do not switch before the refit.
+    # GPU pending, ~10 min per oom run (scratch dir of your choice):
+    #   NEMO_EXP_DIR=<scratch> LONE="20,25,30,35,38" SPREAD=1 NEMO_MEM_PROBE=200 \
+    #     ./perso/oom_margin_check.sh | tee refit_lone.log
+    #   NEMO_EXP_DIR=<scratch> SPREAD=1 NEMO_MEM_PROBE=200 \
+    #     ./perso/oom_margin_check.sh | tee refit_frontier.log
+    #   python perso/fit_cost_model.py refit_lone.log refit_frontier.log
+    # The fit prints both models' residuals and the (sum_weight, max_weight)
+    # that keep budget 15000 at the measured 21.3 GiB peak. Paste the better
+    # model's three values below, then re-run the plain worst-case ladder
+    # (no SPREAD) before trusting the budget.
     cost_batching:
       enabled: true
+      # Per-clip cost term, see the TODO above. duration_sq until the refit.
+      # sum_weight / max_weight (unset = the model's defaults in asr_batching.py,
+      # 4 and 6 for duration_sq) go next to it once fitted.
+      cost_model: duration_sq
       # 15000 leaves a measured ~2.2 GB of true headroom on the worst possible
       # batch mix. Verified two ways, because nvidia-smi lies here: it reports
       # ~23.6 of 24.5 GB, but that is the caching allocator holding freed blocks,
@@ -1802,6 +1828,22 @@ exp_manager:
   #            other batch shapes; what it costs on a lone clip is measured
   #            with `perso/oom_margin_check.sh` (LONE mode, NEMO_MEM_PROBE)
   #            and the cap follows that measurement.
+  #            GPU pending (2026-10-30): the ladder to run, one duration per
+  #            invocation and ascending, because the fixture puts the longest
+  #            clips first and the first OOM ends the run (~10 min each; the
+  #            train manifest has 1209 clips at 39-40 s, 384 at 49-50 s and
+  #            140 at 59-60 s, so every rung has its 20 clips):
+  #              for d in 40 45 50 55 60; do
+  #                NEMO_EXP_DIR=<scratch> LONE=$d \
+  #                  OVERRIDES="model.joint.fp16_loss_table=true" \
+  #                  ./perso/oom_margin_check.sh | tee lone_fp16_$d.log || break
+  #              done
+  #            plus `NEMO_EXP_DIR=<scratch> LONE=40 ./perso/oom_margin_check.sh`
+  #            without OVERRIDES as the fp32 baseline on the same clips. The
+  #            cap is the longest rung that PASSes with >= ~1000 MiB margin.
+  #            Raising it also needs joint.fp16_loss_table: true, and a cap
+  #            above sqrt(15000 / 10) = 38.7 s is safe at budget 15000 only
+  #            because oversized clips come out alone.
   #        (5) model.loss_weighting: per_token. The loss over a batch is
   #            its summed clip losses over one constant instead of its own
   #            clip count, so a lone long clip's tokens no longer weigh up
