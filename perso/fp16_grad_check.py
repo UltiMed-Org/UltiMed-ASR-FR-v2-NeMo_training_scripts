@@ -259,6 +259,8 @@ def run_pass(model, fp16_table, encoded, encoded_len, decoded, target_len, trans
 
 
 def compare(g32, g16):
+    # float64: an fp32 dot over ~10M entries drifts enough to print cosines of 1.006.
+    g32, g16 = g32.double(), g16.double()
     n32, n16 = g32.norm().item(), g16.norm().item()
     cos = torch.dot(g32, g16).item() / max(n32 * n16, 1e-30)
     max_diff = (g16 - g32).abs().max().item() / max(n32, 1e-30)
