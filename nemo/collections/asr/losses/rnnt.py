@@ -299,6 +299,7 @@ def resolve_rnnt_loss(loss_name: str, blank_idx: int, loss_kwargs: dict = None) 
         durations = loss_kwargs.pop('durations', None)
         sigma = loss_kwargs.pop('sigma', 0.0)
         omega = loss_kwargs.pop('omega', 0.0)
+        fp16_table = loss_kwargs.pop('fp16_table', False)
         loss_func = TDTLossNumba(
             blank=blank_idx,
             durations=durations,
@@ -307,6 +308,7 @@ def resolve_rnnt_loss(loss_name: str, blank_idx: int, loss_kwargs: dict = None) 
             clamp=clamp,
             sigma=sigma,
             omega=omega,
+            fp16_table=fp16_table,
         )
         _warn_unused_additional_kwargs(loss_name, loss_kwargs)
 
@@ -424,6 +426,20 @@ class RNNTLoss(Loss):
         self._loss = resolve_rnnt_loss(loss_name, blank_idx=self._blank, loss_kwargs=loss_kwargs)
         self._force_float32 = RNNT_LOSS_RESOLVER[loss_name].force_float32
         self._fp16_compat_checked = False
+        if getattr(self._loss, "fp16_table", False):
+            self.set_tdt_fp16_table(True)
+
+    def set_tdt_fp16_table(self, enabled: bool):
+        """Switch the numba TDT loss to its fp16 table (see TDTLossNumba).
+
+        The loss then takes the joint in its own dtype (bf16 under bf16-mixed)
+        instead of the fp32 upcast below, and makes its fp16 copy itself.
+        Switching off restores the upcast. Raises for any other loss.
+        """
+        if not hasattr(self._loss, "fp16_table"):
+            raise ValueError(f"fp16_table needs the numba TDT loss, this RNNTLoss runs {type(self._loss).__name__}")
+        self._loss.fp16_table = enabled  # validates numba fp16 support
+        self._force_float32 = not enabled
 
     def reduce(self, losses, target_lengths):
 

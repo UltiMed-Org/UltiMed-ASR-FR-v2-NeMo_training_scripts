@@ -33,6 +33,7 @@ from torch.nn import Module
 
 from nemo.collections.asr.parts.numba.rnnt_loss import rnnt
 from nemo.collections.asr.parts.numba.rnnt_loss.utils.cpu_utils import cpu_rnnt
+from nemo.core.utils import numba_utils
 
 __all__ = ['rnnt_loss', 'RNNTLossNumba', 'MultiblankRNNTLossNumba', 'TDTLossNumba']
 
@@ -112,6 +113,7 @@ class _TDTNumba(Function):
         clamp,
         sigma,
         omega,
+        in_place_grads=False,
     ):
         """
         log_probs: Tensor of (batch x seqLength x labelLength x outputDim) containing output from network
@@ -127,6 +129,9 @@ class _TDTNumba(Function):
         omega: probability for sampling the standard RNN-T loss.
         Refer to https://arxiv.org/abs/2304.06795 for detailed explanations for
             the above parameters;
+        in_place_grads: write the label gradient over label_acts instead of a
+            new [B, T, U, V] buffer. label_acts must be a private copy nothing
+            else reads afterwards (TDTLossNumba's fp16 table), and omega 0.
         """
         is_cuda = label_acts.is_cuda
 
@@ -139,10 +144,17 @@ class _TDTNumba(Function):
         else:
             raise ValueError("TDT is not yet implemented for non CUDA computation.")
 
-        label_grads = torch.zeros_like(label_acts) if label_acts.requires_grad else None
+        if not label_acts.requires_grad:
+            label_grads = None
+        elif in_place_grads:
+            label_grads = label_acts
+        else:
+            label_grads = torch.zeros_like(label_acts)
         duration_grads = torch.zeros_like(duration_acts) if duration_acts.requires_grad else None
         minibatch_size = label_acts.size(0)
-        costs = torch.zeros(minibatch_size, device=label_acts.device, dtype=label_acts.dtype)
+        # fp32 costs for an fp16 table: they are copied from the fp32 log-likelihoods.
+        costs_dtype = torch.float32 if label_acts.dtype == torch.float16 else label_acts.dtype
+        costs = torch.zeros(minibatch_size, device=label_acts.device, dtype=costs_dtype)
 
         loss_func(
             label_acts,
@@ -183,6 +195,7 @@ class _TDTNumba(Function):
             return (
                 label_grads.mul_(grad_output),
                 duration_grads.mul_(grad_output),
+                None,
                 None,
                 None,
                 None,
@@ -529,6 +542,9 @@ class TDTLossNumba(Module):
         fastemit_lambda: Float scaling factor for FastEmit regularization. Refer to
                 FastEmit: Low-latency Streaming ASR with Sequence-level Emission Regularization.
         clamp: Float value. When set to value >= 0.0, will clamp the gradient to [-clamp, clamp].
+        fp16_table: run the kernels on an fp16 copy of the token logits and
+            write the fp16 gradient over that copy (when omega is 0), keeping
+            the denominators, alphas, betas and costs in fp32. Off by default.
     """
 
     def __init__(
@@ -540,6 +556,7 @@ class TDTLossNumba(Module):
         clamp: float = -1,
         sigma: float = 0.0,
         omega: float = 0.0,
+        fp16_table: bool = False,
     ):
         super(TDTLossNumba, self).__init__()
         self.blank = blank
@@ -550,6 +567,20 @@ class TDTLossNumba(Module):
         self.loss = _TDTNumba.apply
         self.sigma = sigma
         self.omega = omega
+        self.fp16_table = fp16_table
+
+    @property
+    def fp16_table(self) -> bool:
+        return self._fp16_table
+
+    @fp16_table.setter
+    def fp16_table(self, enabled: bool):
+        if enabled:
+            supported, reason = numba_utils.is_numba_cuda_fp16_supported(return_reason=True)
+            if not supported:
+                # Fail at setup, not at the first training step's kernel compile.
+                raise RuntimeError(f"TDT fp16_table needs numba CUDA fp16 support: {reason}")
+        self._fp16_table = bool(enabled)
 
     def forward(self, acts, labels, act_lens, label_lens):
         """
@@ -564,8 +595,19 @@ class TDTLossNumba(Module):
         label_acts, duration_acts = torch.split(
             acts, [acts.shape[-1] - len(self.durations), len(self.durations)], dim=-1
         )
-        label_acts = label_acts.contiguous()
-        duration_acts = torch.nn.functional.log_softmax(duration_acts, dim=-1).contiguous()
+        if self.fp16_table:
+            # One fp16 copy, which the kernel then overwrites with the gradient:
+            # ~4 bytes per [B, T, U, V] cell with a bf16 joint, against ~12 for
+            # the fp32 cast + contiguous copy + zeroed gradient. bf16 -> fp16 is
+            # exact for |logit| < 65504 (fp16 has 3 more mantissa bits); an fp32
+            # joint gets rounded. copy=True: the copy must be private even when
+            # the split view happens to be contiguous (B = T = U = 1).
+            label_acts = label_acts.to(torch.float16, copy=True).contiguous()
+            # [B, T, U, D] with D = 5: negligible, so it stays fp32.
+            duration_acts = torch.nn.functional.log_softmax(duration_acts.float(), dim=-1).contiguous()
+        else:
+            label_acts = label_acts.contiguous()
+            duration_acts = torch.nn.functional.log_softmax(duration_acts, dim=-1).contiguous()
 
         return self.loss(
             label_acts,
@@ -580,6 +622,8 @@ class TDTLossNumba(Module):
             self.clamp,
             self.sigma,
             self.omega,
+            # omega > 0 samples the plain RNNT grad kernel, which cannot run in place.
+            self.fp16_table and self.omega == 0.0,
         )
 
 
