@@ -39,6 +39,11 @@
 # script), so a FAIL says which batch shape failed and a PASS says how close
 # each shape came.
 #
+# SPREAD=1 picks clips spanning the label lengths found at each duration
+# instead of only the longest transcripts. That is not a worst case any more:
+# it is the fixture for refitting the cost model (perso/fit_cost_model.py),
+# which needs U to vary at a fixed d. Raise NEMO_MEM_PROBE to cover every batch.
+#
 # Usage:  NEMO_EXP_DIR=/tmp/oom_check ./perso/oom_margin_check.sh [cap] [batch]
 #         NEMO_EXP_DIR=/tmp/oom_check BUDGET=25000 ./perso/oom_margin_check.sh 50
 #         NEMO_EXP_DIR=/tmp/oom_check LONE="40,45,50,55,60" ./perso/oom_margin_check.sh
@@ -73,6 +78,7 @@ trap 'rm -f "$WORST" "$VLOG"' EXIT
 
 "$PY" - "$SRC" "$WORST" "$CAP" "$BUDGET" <<'EOF'
 import json, os, sys
+import numpy as np
 from omegaconf import OmegaConf
 
 src, out, cap, budget_arg = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4])
@@ -80,6 +86,8 @@ cost_cfg = OmegaConf.load("perso/training_config.yaml").model.train_ds.get("cost
 cost_on = bool(cost_cfg) and bool(cost_cfg.get("enabled", False))
 
 lone = [float(x) for x in os.environ.get("LONE", "").replace(",", " ").split()]
+spread = os.environ.get("SPREAD", "") not in ("", "0")
+cost_model = cost_cfg.get("cost_model", "duration_sq") if cost_cfg else "duration_sq"
 
 if lone:
     # One corner per duration asked for, each clip alone in its batch because
@@ -94,6 +102,9 @@ elif cost_on:
     n_max = int(cost_cfg.get("max_batch_size", 16))
     sizes = [n for n in (1, 2, 4, 8, 16) if n <= n_max]
     targets = sorted({round(min(cap, (budget / (4 * n + 6)) ** 0.5), 1) for n in sizes}, reverse=True)
+    if cost_model != "duration_sq":
+        print(f"[oom-check] WARNING: frontier targets assume duration_sq (4*sum d^2 + 6*max d^2), "
+              f"the config uses {cost_model}: the corners are approximate, the probe lines are not")
     per_target = max(200 // len(targets), 1)
 else:
     targets, per_target = [cap], 200
@@ -113,7 +124,13 @@ for target in targets:
     at_target = [d for d in rows if target - window <= float(d.get("duration") or 0) <= target]
     # longest transcript at that duration is the worst case for U in the lattice
     at_target.sort(key=lambda d: -len(d.get("text") or ""))
-    chosen = at_target[:per_target]
+    if spread and len(at_target) > per_target:
+        # Refit fixture: label lengths from densest to sparsest at each
+        # duration, so the probe sees U move while d holds still.
+        picks = np.linspace(0, len(at_target) - 1, per_target).round().astype(int)
+        chosen = [at_target[i] for i in picks]
+    else:
+        chosen = at_target[:per_target]
     selected.extend(chosen)
     report.append(f"{len(chosen)}x{target}s")
 
@@ -125,6 +142,7 @@ with open(out, "w") as f:
         f.write(json.dumps(d, ensure_ascii=False) + "\n")
 
 mode = ("lone clips" if lone else "cost batching") if cost_on else f"fixed batch_size, cap {cap}s"
+mode += ", label lengths spread" if spread else ""
 print(f"[oom-check] fixture ({mode}): {len(selected)} clips, {' '.join(report)}")
 if len(selected) < sum(min(per_target, 1) for _ in targets):
     print("[oom-check] WARNING: manifest has no clips at some target durations")

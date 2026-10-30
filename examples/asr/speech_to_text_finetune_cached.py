@@ -77,6 +77,9 @@ import lightning.pytorch as pl
 
 from nemo.collections.asr.models import ASRModel
 from nemo.collections.asr.parts.utils.asr_batching import (
+    COST_MODEL_DURATION_SQ,
+    COST_MODEL_DURATION_TOKENS,
+    clip_costs,
     get_duration_cost_batch_sampler,
     rnnt_batch_cost,
 )
@@ -976,8 +979,11 @@ class _MemoryProbeCallback(pl.Callback):
     measurement finally line up per batch shape.
 
     Columns: n clips, max and summed duration, the cost the sampler charged
-    (rnnt_batch_cost, the thing being validated), max label length, and the
-    allocated / reserved peaks in MiB.
+    (rnnt_batch_cost under the train sampler's own cost model and weights, the
+    thing being validated), max label length, the allocated / reserved peaks
+    in MiB, then the raw per-clip terms of BOTH cost models (sum and max of d^2
+    and of d * (U + 1)), which are what perso/fit_cost_model.py regresses the
+    peaks on to refit the weights.
     """
 
     def __init__(self, batches):
@@ -1005,13 +1011,27 @@ class _MemoryProbeCallback(pl.Callback):
         sample_rate = float(train_cfg.get("sample_rate", 16000) or 16000)
         durations = (signal_lens.detach().cpu().float() / sample_rate).tolist()
         unit = "s" if max(durations) > 0.5 else "s?(cached latents, not audio)"
+        tokens = token_lens.detach().cpu().tolist()
+        sampler = getattr(getattr(pl_module, "_train_dl", None), "batch_sampler", None)
+        cost_model = getattr(sampler, "cost_model", COST_MODEL_DURATION_SQ)
+        cost = rnnt_batch_cost(
+            durations,
+            getattr(sampler, "sum_weight", None),
+            getattr(sampler, "max_weight", None),
+            token_counts=tokens,
+            cost_model=cost_model,
+        )
+        d2 = clip_costs(durations, tokens, COST_MODEL_DURATION_SQ)
+        du = clip_costs(durations, tokens, COST_MODEL_DURATION_TOKENS)
         mib = 1024.0 ** 2
         logging.info(
             f"[mem-probe] batch {self.seen}/{self.batches}: n={len(durations):2d} "
             f"max_dur={max(durations):5.1f}{unit} sum_dur={sum(durations):6.1f}s "
-            f"cost={rnnt_batch_cost(durations):8.0f} max_U={int(token_lens.max()):4d} "
+            f"cost={cost:8.0f} max_U={int(token_lens.max()):4d} "
             f"peak_alloc={torch.cuda.max_memory_allocated() / mib:8.0f}MiB "
-            f"peak_reserved={torch.cuda.max_memory_reserved() / mib:8.0f}MiB"
+            f"peak_reserved={torch.cuda.max_memory_reserved() / mib:8.0f}MiB "
+            f"d2_sum={d2.sum():.1f} d2_max={d2.max():.1f} dU_sum={du.sum():.1f} dU_max={du.max():.1f} "
+            f"cost_model={cost_model}"
         )
         if self.seen == self.batches:
             logging.info(
