@@ -1470,6 +1470,14 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         # to change, requires running ``model.temperature = T`` explicitly
         self.temperature = 1.0
 
+        # Long-clip path (losses/tdt_chunked.py): a fused sub-batch whose
+        # lattice has more than this many T * (U+1) cells computes its TDT
+        # loss chunk by chunk over T instead of through the dense logit table.
+        # None = never (upstream behaviour). Set by the training script from
+        # model.joint.long_path_min_cells / long_path_chunk_frames.
+        self.long_path_min_cells = None
+        self.long_path_chunk_frames = 64
+
     @typecheck()
     def forward(
         self,
@@ -1550,35 +1558,39 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
                     if sub_dec.shape[1] != max_sub_transcript_length + 1:
                         sub_dec = sub_dec.narrow(dim=1, start=0, length=int(max_sub_transcript_length + 1))
 
-                    # Perform joint => [sub-batch, T', U', V + 1]
-                    sub_joint = self.joint(sub_enc, sub_dec)
-
-                    del sub_dec
-
                     # Reduce transcript length to correct alignment
                     # Transcript: [sub-batch, L] -> [sub-batch, L']; L' <= L
                     if sub_transcripts.shape[1] != max_sub_transcript_length:
                         sub_transcripts = sub_transcripts.narrow(dim=1, start=0, length=int(max_sub_transcript_length))
 
-                    # Compute sub batch loss
-                    # preserve loss reduction type
-                    loss_reduction = self.loss.reduction
+                    if self._takes_long_path(sub_enc.shape[1], sub_dec.shape[1]):
+                        loss_batch = self._long_path_loss(sub_enc, sub_dec, sub_transcripts, sub_enc_lens, sub_transcript_lens)
+                        del sub_dec
+                    else:
+                        # Perform joint => [sub-batch, T', U', V + 1]
+                        sub_joint = self.joint(sub_enc, sub_dec)
 
-                    # override loss reduction to sum
-                    self.loss.reduction = None
+                        del sub_dec
 
-                    # compute and preserve loss
-                    loss_batch = self.loss(
-                        log_probs=sub_joint,
-                        targets=sub_transcripts,
-                        input_lengths=sub_enc_lens,
-                        target_lengths=sub_transcript_lens,
-                    )
+                        # Compute sub batch loss
+                        # preserve loss reduction type
+                        loss_reduction = self.loss.reduction
+
+                        # override loss reduction to sum
+                        self.loss.reduction = None
+
+                        # compute and preserve loss
+                        loss_batch = self.loss(
+                            log_probs=sub_joint,
+                            targets=sub_transcripts,
+                            input_lengths=sub_enc_lens,
+                            target_lengths=sub_transcript_lens,
+                        )
+
+                        # reset loss reduction type
+                        self.loss.reduction = loss_reduction
                     losses.append(loss_batch)
                     target_lengths.append(sub_transcript_lens)
-
-                    # reset loss reduction type
-                    self.loss.reduction = loss_reduction
 
                 else:
                     losses = None
@@ -1683,14 +1695,9 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         Returns:
             Logits / log softmaxed tensor of shape (B, T, U, V + 1).
         """
+        g = self._mask_prednet(g)
         f = f.unsqueeze(dim=2)  # (B, T, 1, H)
         g = g.unsqueeze(dim=1)  # (B, 1, U, H)
-
-        if self.training and self.masking_prob > 0:
-            [B, _, U, _] = g.shape
-            rand = torch.rand([B, 1, U, 1]).to(g.device)
-            rand = torch.gt(rand, self.masking_prob)
-            g = g * rand
 
         inp = f + g  # [B, T, U, H]
 
@@ -1722,6 +1729,54 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
                     res = res.log_softmax(dim=-1)
 
         return res
+
+    def _mask_prednet(self, g: torch.Tensor) -> torch.Tensor:
+        """Training-time masking of whole prediction steps, g [B, U, H] (masking_prob)."""
+        if self.training and self.masking_prob > 0:
+            [B, U, _] = g.shape
+            rand = torch.rand([B, U, 1]).to(g.device)
+            rand = torch.gt(rand, self.masking_prob)
+            g = g * rand
+        return g
+
+    def _takes_long_path(self, max_t: int, max_u_plus_1: int) -> bool:
+        """Whether a fused sub-batch of this lattice size goes through _long_path_loss."""
+        return self.long_path_min_cells is not None and max_t * max_u_plus_1 > self.long_path_min_cells
+
+    def _long_path_loss(self, enc, dec, transcripts, enc_lens, transcript_lens):
+        """Per-sample TDT loss of one fused sub-batch through the compact lattice.
+
+        Same result as self.loss(self.joint(enc, dec), ...) with reduction None,
+        without the [B, T, U+1, V] table (see losses/tdt_chunked.py).
+        """
+        from nemo.collections.asr.losses.tdt_chunked import chunked_tdt_joint_loss
+        from nemo.collections.asr.parts.numba.rnnt_loss.rnnt_pytorch import TDTLossNumba
+
+        tdt = getattr(self.loss, "_loss", None)
+        if not isinstance(tdt, TDTLossNumba):
+            raise ValueError(
+                f"joint.long_path_min_cells needs the numba TDT loss, this joint runs {type(tdt).__name__}"
+            )
+        if tdt.fastemit_lambda != 0.0 or tdt.omega != 0.0:
+            raise ValueError(
+                "joint.long_path_min_cells needs fastemit_lambda 0 and omega 0 (set joint.tdt_omega: 0.0), "
+                f"got fastemit_lambda={tdt.fastemit_lambda}, omega={tdt.omega}"
+            )
+        if self.is_adapter_available():
+            raise ValueError("joint.long_path_min_cells does not run joint adapters")
+        return chunked_tdt_joint_loss(
+            self.project_encoder(enc),
+            self._mask_prednet(self.project_prednet(dec)),
+            transcripts.long(),
+            enc_lens.long(),
+            transcript_lens.long(),
+            self.joint_net,
+            blank=tdt.blank,
+            durations=tdt.durations,
+            sigma=tdt.sigma,
+            clamp=tdt.clamp,
+            chunk_frames=self.long_path_chunk_frames,
+        )
 
     def _joint_net_modules(self, num_classes, pred_n_hidden, enc_n_hidden, joint_n_hidden, activation, dropout):
         """
