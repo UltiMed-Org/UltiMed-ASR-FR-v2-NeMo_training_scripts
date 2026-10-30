@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Iterator, List, Optional, Union
+from typing import Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -276,27 +276,94 @@ def get_semi_sorted_batch_sampler(
 # above 19800, so the model separates them cleanly. Re-fit it (and re-run
 # perso/oom_margin_check.sh) if the GPU, the model, the number of trainable
 # encoder layers or joint.fused_batch_size changes.
+#
+# The per-clip term is selectable (cost_batching.cost_model), because d^2 only
+# holds while U tracks T. The v2 corpus breaks that: nine voices read at 5.1 to
+# 6.4 tokens/s, and two lone 39.8 s clips measured 2026-10-28 peaked at 18058
+# MiB (264 tokens) and 22194 MiB (319 tokens), +4.1 GB at equal d^2 cost.
+#   duration_sq      clip = d^2            (the fit above, the default)
+#   duration_tokens  clip = d * (U + 1)    (seconds x lattice rows, U = tokens)
+# T is d over a constant frame rate, so d * (U + 1) is T * U up to a factor the
+# weights absorb.
 
-_COST_SUM_WEIGHT = 4.0
-_COST_MAX_WEIGHT = 6.0
+COST_MODEL_DURATION_SQ = "duration_sq"
+COST_MODEL_DURATION_TOKENS = "duration_tokens"
+
+# (sum_weight, max_weight) per cost model.
+# duration_tokens: TODO GPU refit pending (perso/fit_cost_model.py). Until then
+# these are the duration_sq weights x 0.184, the ratio sum(d^2) / sum(d*(U+1))
+# over the v2 train manifest's 21,594 clips >= 30 s (0.178 over all 473,072
+# clips; mean 5.4 tokens/s on the long ones, 5.7 overall). So a long clip read
+# at the corpus rate costs what it did under duration_sq, and a dense one more.
+COST_MODEL_WEIGHTS = {
+    COST_MODEL_DURATION_SQ: (4.0, 6.0),
+    COST_MODEL_DURATION_TOKENS: (0.74, 1.10),
+}
+_COST_SUM_WEIGHT, _COST_MAX_WEIGHT = COST_MODEL_WEIGHTS[COST_MODEL_DURATION_SQ]
+
+
+def clip_costs(
+    durations: Union[List[float], np.ndarray],
+    token_counts: Optional[Union[List[int], np.ndarray]] = None,
+    cost_model: str = COST_MODEL_DURATION_SQ,
+) -> np.ndarray:
+    """Per-clip term of the cost model, one value per clip.
+
+    Args:
+        durations: clip durations in seconds.
+        token_counts: label length of each clip in tokens. Required by
+            ``duration_tokens``, ignored by ``duration_sq``.
+        cost_model: one of ``COST_MODEL_WEIGHTS``.
+    """
+    durations = np.asarray(durations, dtype=np.float64)
+    if cost_model == COST_MODEL_DURATION_SQ:
+        return np.square(durations)
+    if cost_model == COST_MODEL_DURATION_TOKENS:
+        if token_counts is None:
+            raise ValueError(f"cost_model '{cost_model}' needs token_counts")
+        token_counts = np.asarray(token_counts, dtype=np.float64)
+        if token_counts.shape != durations.shape:
+            raise ValueError(
+                f"token_counts has shape {token_counts.shape}, durations {durations.shape}: one count per clip"
+            )
+        return durations * (token_counts + 1.0)
+    raise ValueError(f"cost_model must be one of {sorted(COST_MODEL_WEIGHTS)}, got '{cost_model}'")
 
 
 def rnnt_batch_cost(
     durations: Union[List[float], np.ndarray],
-    sum_weight: float = _COST_SUM_WEIGHT,
-    max_weight: float = _COST_MAX_WEIGHT,
+    sum_weight: Optional[float] = None,
+    max_weight: Optional[float] = None,
+    token_counts: Optional[Union[List[int], np.ndarray]] = None,
+    cost_model: str = COST_MODEL_DURATION_SQ,
 ) -> float:
     """Memory cost of one RNNT/TDT batch in the fitted (arbitrary) unit.
 
     Args:
         durations: clip durations in seconds, one per sample in the batch.
-        sum_weight: weight of the per-clip term.
-        max_weight: weight of the largest-clip transient.
+        sum_weight: weight of the per-clip term. None takes the cost model's.
+        max_weight: weight of the largest-clip transient. None takes the cost model's.
+        token_counts: label lengths, needed by the ``duration_tokens`` model.
+        cost_model: one of ``COST_MODEL_WEIGHTS``.
     """
+    sum_weight, max_weight = resolve_cost_weights(cost_model, sum_weight, max_weight)
     if len(durations) == 0:
         return 0.0
-    squares = np.square(np.asarray(durations, dtype=np.float64))
-    return float(sum_weight * squares.sum() + max_weight * squares.max())
+    costs = clip_costs(durations, token_counts, cost_model)
+    return float(sum_weight * costs.sum() + max_weight * costs.max())
+
+
+def resolve_cost_weights(
+    cost_model: str, sum_weight: Optional[float] = None, max_weight: Optional[float] = None
+) -> Tuple[float, float]:
+    """The (sum_weight, max_weight) pair to use: explicit values win, None takes the model's."""
+    if cost_model not in COST_MODEL_WEIGHTS:
+        raise ValueError(f"cost_model must be one of {sorted(COST_MODEL_WEIGHTS)}, got '{cost_model}'")
+    default_sum, default_max = COST_MODEL_WEIGHTS[cost_model]
+    return (
+        float(default_sum if sum_weight is None else sum_weight),
+        float(default_max if max_weight is None else max_weight),
+    )
 
 
 class DurationCostBatchSampler(torch.utils.data.Sampler):
@@ -329,6 +396,11 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         drop_last: drop the final batch of the epoch.
         seed: base seed. The epoch number is added to it.
         global_rank, world_size: batches are dealt round-robin across ranks.
+        sum_weight, max_weight: cost model weights. None takes the cost
+            model's fitted pair from ``COST_MODEL_WEIGHTS``.
+        token_counts: label length in tokens of every sample, in dataset index
+            order. Required by the ``duration_tokens`` cost model.
+        cost_model: per-clip term of the cost, see ``clip_costs``.
     """
 
     def __init__(
@@ -343,8 +415,10 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         seed: int = 42,
         global_rank: int = 0,
         world_size: int = 1,
-        sum_weight: float = _COST_SUM_WEIGHT,
-        max_weight: float = _COST_MAX_WEIGHT,
+        sum_weight: Optional[float] = None,
+        max_weight: Optional[float] = None,
+        token_counts: Optional[Union[List[int], np.ndarray]] = None,
+        cost_model: str = COST_MODEL_DURATION_SQ,
     ):
         self.durations = np.asarray(durations, dtype=np.float64)
         if self.durations.ndim != 1 or self.durations.size == 0:
@@ -363,17 +437,20 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         self.seed = int(seed)
         self.global_rank = int(global_rank)
         self.world_size = int(world_size)
-        self.sum_weight = float(sum_weight)
-        self.max_weight = float(max_weight)
+        self.cost_model = cost_model
+        self.sum_weight, self.max_weight = resolve_cost_weights(cost_model, sum_weight, max_weight)
+        self.token_counts = None if token_counts is None else np.asarray(token_counts, dtype=np.int64)
+        # Computed once: the packing loop below only reads it.
+        self.clip_costs = clip_costs(self.durations, self.token_counts, cost_model)
         self.epoch = 0
 
-        solo_cost = (self.sum_weight + self.max_weight) * np.square(self.durations)
+        solo_cost = (self.sum_weight + self.max_weight) * self.clip_costs
         n_oversized = int((solo_cost > self.budget).sum())
         if n_oversized:
             logging.warning(
                 f"DurationCostBatchSampler: {n_oversized} sample(s) cost more than the budget "
-                f"({self.budget:.0f}) on their own, the longest being "
-                f"{self.durations.max():.1f}s at cost {solo_cost.max():.0f}. They will be emitted "
+                f"({self.budget:.0f}) on their own, the costliest being "
+                f"{self.durations[solo_cost.argmax()]:.1f}s at cost {solo_cost.max():.0f}. They will be emitted "
                 "alone and may still run out of memory. Lower max_duration or raise the budget."
             )
 
@@ -383,28 +460,28 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         """Greedily fill batches from an ordered index sequence."""
         batches: List[List[int]] = []
         current: List[int] = []
-        sum_sq = 0.0
-        max_sq = 0.0
+        sum_cost = 0.0
+        max_cost = 0.0
         total_dur = 0.0
 
         for idx in indices:
             duration = float(self.durations[idx])
-            square = duration * duration
-            new_sum_sq = sum_sq + square
-            new_max_sq = square if square > max_sq else max_sq
+            cost = float(self.clip_costs[idx])
+            new_sum = sum_cost + cost
+            new_max = cost if cost > max_cost else max_cost
 
             full = (
-                self.sum_weight * new_sum_sq + self.max_weight * new_max_sq > self.budget
+                self.sum_weight * new_sum + self.max_weight * new_max > self.budget
                 or len(current) + 1 > self.max_batch_size
                 or (self.max_total_duration is not None and total_dur + duration > self.max_total_duration)
             )
             if current and full:
                 batches.append(current)
                 current = []
-                new_sum_sq, new_max_sq, total_dur = square, square, 0.0
+                new_sum, new_max, total_dur = cost, cost, 0.0
 
             current.append(int(idx))
-            sum_sq, max_sq = new_sum_sq, new_max_sq
+            sum_cost, max_cost = new_sum, new_max
             total_dur += duration
 
         if current:
@@ -447,7 +524,10 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
         sizes = np.array([len(b) for b in self._batches], dtype=np.float64)
         seconds = np.array([self.durations[b].sum() for b in self._batches], dtype=np.float64)
         costs = np.array(
-            [rnnt_batch_cost(self.durations[b], self.sum_weight, self.max_weight) for b in self._batches]
+            [
+                self.sum_weight * self.clip_costs[b].sum() + self.max_weight * self.clip_costs[b].max()
+                for b in self._batches
+            ]
         )
         return {
             'batches': len(self._batches),
@@ -481,7 +561,12 @@ def get_duration_cost_batch_sampler(
         )
 
     cost_cfg = config.get('cost_batching', {}) or {}
-    durations = [sample.duration for sample in dataset.manifest_processor.collection.data]
+    cost_model = cost_cfg.get('cost_model', COST_MODEL_DURATION_SQ) or COST_MODEL_DURATION_SQ
+    samples = dataset.manifest_processor.collection.data
+    durations = [sample.duration for sample in samples]
+    # The collection tokenized every transcript when the manifest was loaded, so
+    # label lengths are free here: no second pass over the corpus.
+    token_counts = [len(sample.text_tokens) for sample in samples] if cost_model == COST_MODEL_DURATION_TOKENS else None
 
     return DurationCostBatchSampler(
         durations=durations,
@@ -494,4 +579,8 @@ def get_duration_cost_batch_sampler(
         seed=cost_cfg.get('seed', 42),
         global_rank=model.global_rank,
         world_size=model.world_size,
+        sum_weight=cost_cfg.get('sum_weight', None),
+        max_weight=cost_cfg.get('max_weight', None),
+        token_counts=token_counts,
+        cost_model=cost_model,
     )

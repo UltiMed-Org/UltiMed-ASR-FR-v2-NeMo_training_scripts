@@ -25,8 +25,10 @@ from omegaconf import OmegaConf
 
 from nemo.collections.asr.data import audio_to_text
 from nemo.collections.asr.parts.utils.asr_batching import (
+    COST_MODEL_WEIGHTS,
     DurationCostBatchSampler,
     SemiSortBatchSampler,
+    get_duration_cost_batch_sampler,
     rnnt_batch_cost,
 )
 from nemo.collections.asr.parts.utils.manifest_utils import write_manifest
@@ -296,6 +298,110 @@ class TestASRSamplers:
         with pytest.raises(ValueError):
             DurationCostBatchSampler(durations=[10.0], budget=15000.0, max_batch_size=0)
 
+    # ---- label-length-aware cost model ---------------------------------------
+    # The lattice is [T, U, V], so d^2 is only right while U tracks T. Measured
+    # 2026-10-28 on v2 (oom_margin_check.sh LONE=40): two lone 39.8 s clips, 264
+    # and 319 tokens, peaked 18058 and 22194 MiB at the same d^2 cost.
+
+    def test_duration_sq_stays_the_default(self):
+        # Nothing may change silently until the duration_tokens weights are
+        # refit on the GPU: a sampler built the old way must still be the old one.
+        durations = self._durations(n=500)
+        default = DurationCostBatchSampler(durations=durations, budget=15000.0, seed=3)
+        explicit = DurationCostBatchSampler(
+            durations=durations, budget=15000.0, seed=3, cost_model='duration_sq', sum_weight=4.0, max_weight=6.0
+        )
+        assert default.cost_model == 'duration_sq'
+        assert (default.sum_weight, default.max_weight) == (4.0, 6.0)
+        assert [list(b) for b in default] == [list(b) for b in explicit]
+
+    def test_duration_tokens_cost_prices_label_length(self):
+        durations = [39.8]
+        sparse, dense = [264], [319]
+        assert rnnt_batch_cost(durations) == rnnt_batch_cost(durations), "d^2 cannot tell them apart"
+        cost_sparse = rnnt_batch_cost(durations, token_counts=sparse, cost_model='duration_tokens')
+        cost_dense = rnnt_batch_cost(durations, token_counts=dense, cost_model='duration_tokens')
+        sum_w, max_w = COST_MODEL_WEIGHTS['duration_tokens']
+        assert cost_sparse == pytest.approx((sum_w + max_w) * 39.8 * 265)
+        assert cost_dense / cost_sparse == pytest.approx(320 / 265)
+        # Explicit weights still win over the model's defaults.
+        assert rnnt_batch_cost(
+            [10.0, 20.0], 1.0, 0.0, token_counts=[9, 19], cost_model='duration_tokens'
+        ) == pytest.approx(10 * 10 + 20 * 20)
+
+    def test_duration_tokens_sampler_respects_budget_and_sends_dense_clips_alone(self):
+        rng = np.random.default_rng(1)
+        durations = self._durations(n=2000)
+        # 4 to 8 tokens/s, wider than the nine v2 voices' 5.1 to 6.4 means.
+        tokens = np.round(durations * rng.uniform(4.0, 8.0, size=durations.size)).astype(int)
+        budget = 15000.0
+        sampler = DurationCostBatchSampler(
+            durations=durations, budget=budget, token_counts=tokens, cost_model='duration_tokens'
+        )
+        drawn = sorted(i for b in sampler for i in b)
+        assert drawn == list(range(len(durations)))
+        for batch in sampler:
+            if len(batch) > 1:
+                assert (
+                    rnnt_batch_cost(durations[batch], token_counts=tokens[batch], cost_model='duration_tokens')
+                    <= budget
+                )
+        assert sampler.stats()['cost_max'] <= max(
+            budget, max(rnnt_batch_cost([d], token_counts=[u], cost_model='duration_tokens') for d, u in zip(durations, tokens))
+        )
+
+        # Same durations, different label lengths: two sparse 30 s clips fit one
+        # batch, two dense ones do not. duration_sq would treat both pairs alike.
+        sum_w, max_w = COST_MODEL_WEIGHTS['duration_tokens']
+        pair_budget = sum_w * 2 * 30 * 151 + max_w * 30 * 151 + 1.0  # two clips of 150 tokens, just fits
+        sparse = DurationCostBatchSampler(
+            durations=[30.0, 30.0], budget=pair_budget, token_counts=[150, 150],
+            cost_model='duration_tokens', shuffle=False,
+        )
+        dense = DurationCostBatchSampler(
+            durations=[30.0, 30.0], budget=pair_budget, token_counts=[240, 240],
+            cost_model='duration_tokens', shuffle=False,
+        )
+        assert [len(b) for b in sparse] == [2]
+        assert [len(b) for b in dense] == [1, 1]
+
+    def test_duration_tokens_rejects_bad_config(self):
+        with pytest.raises(ValueError, match="token_counts"):
+            DurationCostBatchSampler(durations=[10.0], budget=15000.0, cost_model='duration_tokens')
+        with pytest.raises(ValueError, match="one count per clip"):
+            DurationCostBatchSampler(
+                durations=[10.0, 5.0], budget=15000.0, token_counts=[3], cost_model='duration_tokens'
+            )
+        with pytest.raises(ValueError, match="cost_model"):
+            DurationCostBatchSampler(durations=[10.0], budget=15000.0, cost_model='frames')
+        with pytest.raises(ValueError, match="cost_model"):
+            rnnt_batch_cost([10.0], cost_model='frames')
+
+    @pytest.mark.unit
+    def test_duration_tokens_reads_label_lengths_from_the_collection(self):
+        # The collection already tokenized every transcript when the manifest
+        # loaded; the sampler must reuse that, not tokenize again.
+        texts = ['ab', 'abc def', 'a']
+        with tempfile.TemporaryDirectory() as test_dir:
+            dataset = self._write_dataset(test_dir, 'tok', [1.0, 2.0, 3.0], texts=texts)
+            model = SimpleNamespace(global_rank=0, world_size=1)
+            on = get_duration_cost_batch_sampler(
+                model, dataset, {'cost_batching': {'budget': 100.0, 'cost_model': 'duration_tokens'}}
+            )
+            expected = [len(sample.text_tokens) for sample in dataset.manifest_processor.collection.data]
+            assert expected == [len(t) for t in texts], "char parser: one token per character"
+            assert on.cost_model == 'duration_tokens'
+            assert list(on.token_counts) == expected
+            assert (on.sum_weight, on.max_weight) == COST_MODEL_WEIGHTS['duration_tokens']
+
+            off = get_duration_cost_batch_sampler(model, dataset, {'cost_batching': {'budget': 100.0}})
+            assert off.cost_model == 'duration_sq' and off.token_counts is None
+
+            weighted = get_duration_cost_batch_sampler(
+                model, dataset, {'cost_batching': {'budget': 100.0, 'sum_weight': 1.5, 'max_weight': 2.5}}
+            )
+            assert (weighted.sum_weight, weighted.max_weight) == (1.5, 2.5)
+
     # ---- validation cost batching -------------------------------------------
     # Validation is batched by the fine-tune script, not by the sampler itself,
     # and it is the wiring that fails quietly: one `cost_batching` block has to
@@ -303,17 +409,18 @@ class TestASRSamplers:
     # silently stays on its fallback `batch_size` and the only symptom is a slow
     # validation epoch.
 
-    def _write_dataset(self, test_dir, name, durations, sample_rate=16000):
+    def _write_dataset(self, test_dir, name, durations, sample_rate=16000, texts=None):
         """A real ``AudioToCharDataset`` over clips of the given durations.
 
         The audio is silence: nothing here listens to it, but the sampler reads
         the manifest durations and the collate function reads the waveforms.
         """
         metadata = []
-        for n, duration in enumerate(durations):
+        texts = texts or ['non empty'] * len(durations)
+        for n, (duration, text) in enumerate(zip(durations, texts)):
             filename = os.path.join(test_dir, f'{name}_{n:04d}.wav')
             sf.write(filename, np.zeros(int(duration * sample_rate), dtype='float32'), sample_rate)
-            metadata.append({'audio_filepath': filename, 'duration': duration, 'text': 'non empty'})
+            metadata.append({'audio_filepath': filename, 'duration': duration, 'text': text})
         manifest_filepath = os.path.join(test_dir, f'{name}.json')
         write_manifest(manifest_filepath, metadata)
         return audio_to_text.AudioToCharDataset(
