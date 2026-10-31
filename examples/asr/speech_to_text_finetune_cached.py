@@ -61,7 +61,7 @@ import time
 # allowlist. Allowlisting them here avoids UnpicklingError on checkpoint
 # save/resume while keeping weights_only=True everywhere else.
 import torch
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 
 # PyTorch 2.6+ defaults torch.load to weights_only=True, but NeMo
 # checkpoints contain OmegaConf objects, typing hints, and other
@@ -79,8 +79,11 @@ from nemo.collections.asr.models import ASRModel
 from nemo.collections.asr.parts.utils.asr_batching import (
     COST_MODEL_DURATION_SQ,
     COST_MODEL_DURATION_TOKENS,
+    DurationCostBatchSampler,
+    _encoder_frame_seconds,
     clip_costs,
     get_duration_cost_batch_sampler,
+    lattice_cells,
     rnnt_batch_cost,
 )
 from nemo.collections.asr.parts.utils.data_leak_check import check_data_leaks, collect_manifests
@@ -455,6 +458,49 @@ def apply_loss_weighting(asr_model, cfg):
     logging.info(
         f"Loss weighting: per_token, training loss = sum of clip losses / {normalizer:.2f} ({source}), "
         "so every token weighs the same whatever its batch."
+    )
+
+
+def apply_fused_cells_budget(asr_model, cfg):
+    """Group the joint's fused sub-batches by padded lattice cells.
+
+    Set by ``model.joint.fused_cells_budget``: absent or null keeps the fixed
+    ``fused_batch_size`` stride. ``auto`` resolves to the largest single-clip
+    lattice T * (U+1) in the training set, read off the cost sampler, so a
+    sub-batch of short clips never builds a bigger joint table than the worst
+    clip already does alone. An integer is used as is.
+
+    Must run after the training dataloader is final, since ``auto`` reads its
+    sampler.
+
+    Args:
+        asr_model: model whose ``joint`` and ``_train_dl`` are set up.
+        cfg: full config.
+    """
+    budget = (cfg.model.get("joint", None) or {}).get("fused_cells_budget", None)
+    if budget is None:
+        return
+    if budget == "auto":
+        sampler = getattr(getattr(asr_model, "_train_dl", None), "batch_sampler", None)
+        if not isinstance(sampler, DurationCostBatchSampler) or sampler.token_counts is None:
+            raise ValueError(
+                "model.joint.fused_cells_budget: auto needs cost batching with the duration_tokens cost model "
+                "(model.train_ds.cost_batching.enabled: true, model.train_ds.cost_batching.cost_model: "
+                "duration_tokens), so the training set's label lengths are known."
+            )
+        cells = lattice_cells(sampler.durations, sampler.token_counts, _encoder_frame_seconds(asr_model))
+        budget, source = int(cells.max()), "auto: largest single-clip lattice"
+    elif isinstance(budget, int) and not isinstance(budget, bool):
+        source = "explicit"
+    else:
+        raise ValueError(f"model.joint.fused_cells_budget must be null, auto or an integer, got {budget!r}")
+    asr_model.joint.set_fused_cells_budget(budget)
+    if "joint" in asr_model.cfg:
+        with open_dict(asr_model.cfg.joint):
+            asr_model.cfg.joint.fused_cells_budget = budget
+    logging.info(
+        f"Joint fused_cells_budget set to {budget} cells ({source}; "
+        f"fused_batch_size {asr_model.joint.fused_batch_size} caps clips per sub-batch)"
     )
 
 
@@ -1326,6 +1372,13 @@ def _build(cfg):
         if "joint" in asr_model.cfg:
             asr_model.cfg.joint.fused_batch_size = fused_bs
         logging.info(f"Joint fused_batch_size set to {fused_bs}")
+    # The cells budget itself is applied after the dataloaders (apply_fused_cells_budget).
+    if joint_cfg is not None and joint_cfg.get("fused_cells_budget", None) is not None:
+        if not getattr(getattr(asr_model, "joint", None), "fuse_loss_wer", False):
+            logging.warning(
+                "model.joint.fused_cells_budget is set but the joint has fuse_loss_wer=False, "
+                "so the setting has no effect."
+            )
 
     # --- fp16 TDT loss table ---
     # Off by default. When on, the numba TDT loss takes the bf16 joint as is
@@ -1392,8 +1445,10 @@ def _build(cfg):
         if hasattr(cfg.model, 'spec_augment') and cfg.model.spec_augment is not None:
             asr_model.spec_augment = ASRModel.from_config_dict(cfg.model.spec_augment)
 
-    # After the dataloaders (the normalizer is read off the final train sampler)
-    # and before L2-SP, so its penalty is added to the reweighted loss.
+    # After the dataloaders: `auto` and the normalizer are both read off the
+    # final train sampler. Loss weighting goes before L2-SP, so its penalty is
+    # added to the reweighted loss.
+    apply_fused_cells_budget(asr_model, cfg)
     apply_loss_weighting(asr_model, cfg)
 
     # --- L2-SP regularization toward pretrained weights ---

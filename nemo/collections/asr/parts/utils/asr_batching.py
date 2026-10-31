@@ -644,6 +644,6 @@ def _encoder_frame_seconds(model: ASRModel) -> float:
         return float(model.cfg.preprocessor.window_stride) * float(model.cfg.encoder.subsampling_factor)
     except (AttributeError, KeyError, TypeError) as e:
         raise ValueError(
-            "joint.long_path_min_cells needs model.cfg.preprocessor.window_stride and "
+            "joint.long_path_min_cells and fused_cells_budget: auto need model.cfg.preprocessor.window_stride and "
             "model.cfg.encoder.subsampling_factor to price clips in lattice cells"
         ) from e
