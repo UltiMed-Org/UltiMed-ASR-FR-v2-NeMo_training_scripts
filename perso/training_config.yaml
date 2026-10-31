@@ -283,8 +283,26 @@ model:
   # sum_i(T_i * U_i) with no padding amplification. Only the fp32 gradient
   # tensors stay resident across the sub-batches; the large transients live
   # for one clip at a time.
+  #
+  # One clip per call also means tiny kernels: the GPU idles at ~230 W of 350 W
+  # on short-clip batches. fused_cells_budget groups consecutive clips (the
+  # cost sampler emits each batch sorted by duration) into sub-batches whose
+  # padded lattice n * T_max * (U_max+1) stays under that many cells. auto =
+  # the largest single-clip lattice in the training set, so the transient
+  # joint table never exceeds what a lone worst clip already costs, the
+  # frontier perso/oom_margin_check.sh measured. An integer sets it
+  # explicitly; null keeps the fixed fused_batch_size stride. A clip over the
+  # budget alone still goes alone.
+  # With a budget set, fused_batch_size only caps the clips per sub-batch
+  # (16 = cost_batching.max_batch_size, i.e. no cap beyond the budget). Every
+  # run up to 2.1.0 used the fixed stride: fused_cells_budget: null with
+  # fused_batch_size: 1.
+  # TODO: GPU gate pending: gradient equality against fused_batch_size 1
+  # (perso/fp16_grad_check.py) and an oom_margin_check.sh re-run with the
+  # budget on.
   joint:
-    fused_batch_size: 1
+    fused_batch_size: 16
+    fused_cells_budget: auto
     # fp16 TDT loss table (see the TODO below loss_weighting): the loss takes
     # the bf16 joint as is, runs on one fp16 copy of it with an fp32 lattice
     # and writes the gradient over that copy. GPU gate passed 2026-10-30

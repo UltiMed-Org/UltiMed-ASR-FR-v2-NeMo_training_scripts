@@ -263,7 +263,11 @@ def get_semi_sorted_batch_sampler(
 #
 # The second term is the transient of the single largest clip in the batch (the
 # joint runs one clip at a time under fused_batch_size 1, so the peak is set by
-# the biggest one, not by the sum).
+# the biggest one, not by the sum). joint.fused_cells_budget: auto keeps that
+# lone-clip peak unchanged by construction: it groups short clips into fused
+# sub-batches whose padded lattice never exceeds the largest single clip's.
+# The padding inside a sub-batch does add to the resident saved activations
+# though, so the sum term is not guaranteed to hold with the budget on.
 #
 # Measured, worst-case batches, cap:batch -> cost -> outcome
 #     30:2 -> 12600 -> OK (21130 MiB)     25:4 -> 13750 -> OK (23353 MiB)
@@ -275,7 +279,9 @@ def get_semi_sorted_batch_sampler(
 # Every passing configuration sits at or below 18750 and every failing one at or
 # above 19800, so the model separates them cleanly. Re-fit it (and re-run
 # perso/oom_margin_check.sh) if the GPU, the model, the number of trainable
-# encoder layers or joint.fused_batch_size changes.
+# encoder layers, joint.fused_batch_size or joint.fused_cells_budget changes.
+# The fit predates the cells budget: oom_margin_check.sh has to be re-run with
+# it on before trusting the frontier above.
 #
 # The per-clip term is selectable (cost_batching.cost_model), because d^2 only
 # holds while U tracks T. The v2 corpus breaks that: nine voices read at 5.1 to
