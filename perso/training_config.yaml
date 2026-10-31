@@ -287,30 +287,40 @@ model:
   # One clip per call also means tiny kernels: the GPU idles at ~230 W of 350 W
   # on short-clip batches. fused_cells_budget groups consecutive clips (the
   # cost sampler emits each batch sorted by duration) into sub-batches whose
-  # padded lattice n * T_max * (U_max+1) stays under that many cells. auto =
-  # the largest single-clip lattice in the training set, so the transient
-  # joint table never exceeds what a lone worst clip already costs, the
-  # frontier perso/oom_margin_check.sh measured. An integer sets it
-  # explicitly; null keeps the fixed fused_batch_size stride. A clip over the
+  # padded lattice n * T_max * (U_max+1) stays under a cells budget. auto =
+  # the headroom the cost model leaves per batch: the sampler fills a batch
+  # while sum_w * sum_i d_i(U_i+1) + max_w * max_i d_i(U_i+1) <= budget, the
+  # sum term being the resident activations and the max term the transient
+  # joint table of one clip; a fused sub-batch IS that transient, so it may
+  # use safety * (budget * 12.5 - sum_w * batch cells) / max_w cells. A
+  # batch of 16 x 7 s clips (69k cells) gets ~900k, one joint call; a
+  # frontier batch of 11 x 28 s (735k cells) gets ~70k, i.e. one clip at a
+  # time, exactly where the fit was measured. An integer is a fixed cells
+  # count; null keeps the fixed fused_batch_size stride. A clip over the
   # budget alone still goes alone.
   # With a budget set, fused_batch_size only caps the clips per sub-batch
   # (16 = cost_batching.max_batch_size, i.e. no cap beyond the budget). Every
   # run up to 2.1.0 used the fixed stride: fused_cells_budget: null with
   # fused_batch_size: 1.
-  # GPU gate passed 2026-10-31 (first run with it: 2.1.1-lr5e-5):
+  # Gradient gate passed 2026-10-31:
   #   NUMBA_CUDA_USE_NVIDIA_BINDING=1 .venv/bin/python perso/fp16_grad_check.py --compare fused_cells
-  # auto resolved to 31702 cells on the drawn clips; a 6-7.6 s batch grouped
-  # 6 + 2 clips, a 10-12 s batch 3 + 2 + 1; every gradient group cosine
-  # >= 0.99992 vs fused_batch_size 1, norm within 0.25%, loss rel diff
-  # <= 1.4e-3 (bf16 GEMM batching), lone-clip batches bit-identical; peak
-  # VRAM 1.05-1.12x on the grouped short batches (padding), 1.00x alone.
-  # oom_margin_check.sh with the budget on: PASS, worst batch (5 x 38 s, cost
-  # 14298) 20081 MiB allocated, 23808 of 24564 MiB process total, i.e. the
-  # same frontier the fixed stride measured (the cost model's 21800 MiB at
-  # budget 15000 still holds).
+  # a 6-7.6 s batch grouped 6 + 2 clips, a 10-12 s batch 3 + 2 + 1; every
+  # gradient group cosine >= 0.99992 vs fused_batch_size 1, norm within
+  # 0.25%, loss rel diff <= 1.4e-3 (bf16 GEMM batching), lone-clip batches
+  # bit-identical. Peak VRAM 1.12x for 6 x 7 s in one call, i.e. ~18 kB per
+  # extra cell against the fit's 13.9 kB (0.1696 MiB per d(U+1) / 12.5),
+  # hence fused_cells_safety 0.75.
+  # The first auto (largest single-clip lattice in the training set, 439110
+  # cells) OOMed 2.1.1-lr5e-5 at step 0 twice in the joint projection: a lone
+  # 70 s clip has a tiny sum term, a frontier batch of medium clips does not,
+  # and 6 of them in one 400k-cell table on top of 20 GB resident is 27 GB.
+  # The oom_margin_check.sh ladder had passed only because its fixture
+  # resolved auto from its own largest clip. TODO: re-run the ladder with the
+  # headroom auto before the next arm.
   joint:
     fused_batch_size: 16
     fused_cells_budget: auto
+    fused_cells_safety: 0.75
     # fp16 TDT loss table (see the TODO below loss_weighting): the loss takes
     # the bf16 joint as is, runs on one fp16 copy of it with an fp32 lattice
     # and writes the gradient over that copy. GPU gate passed 2026-10-30

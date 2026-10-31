@@ -367,20 +367,23 @@ def assert_effective_values(cfg: DictConfig, asr_model, trainer) -> None:
                    getattr(joint, "long_path_chunk_frames", None))
 
     # --- fused sub-batching -------------------------------------------------
-    # Both set live on the restored joint. `auto` resolves at startup to a cell
-    # count off the train sampler, so only its presence can be checked.
+    # Both set live on the restored joint. `auto` hands the joint the cost
+    # sampler's budget and weights (per-batch headroom), so what is checked is
+    # that the headroom is armed with the configured safety factor.
     if joint_cfg is not None:
         joint = getattr(asr_model, "joint", None)
         if joint_cfg.get("fused_batch_size", None) is not None:
             _check(failures, "joint.fused_batch_size", int(joint_cfg.get("fused_batch_size")),
                    getattr(joint, "fused_batch_size", None))
         cells_cfg = joint_cfg.get("fused_cells_budget", None)
-        live_cells = getattr(joint, "fused_cells_budget", None)
         if cells_cfg == "auto":
-            _check(failures, "joint.fused_cells_budget (auto resolved)", True,
-                   isinstance(live_cells, int) and live_cells >= 1)
+            headroom = getattr(joint, "fused_cells_headroom", None)
+            _check(failures, "joint.fused_cells_budget (auto: headroom armed)", True, headroom is not None)
+            if headroom is not None:
+                _check(failures, "joint.fused_cells_safety", float(joint_cfg.get("fused_cells_safety", 0.75)),
+                       headroom[3])
         elif cells_cfg is not None:
-            _check(failures, "joint.fused_cells_budget", int(cells_cfg), live_cells)
+            _check(failures, "joint.fused_cells_budget", int(cells_cfg), getattr(joint, "fused_cells_budget", None))
 
     # --- dataloader knobs NeMo is known to drop -----------------------------
     if train_dl is not None:

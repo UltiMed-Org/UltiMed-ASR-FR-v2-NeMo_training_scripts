@@ -83,7 +83,6 @@ from nemo.collections.asr.parts.utils.asr_batching import (
     _encoder_frame_seconds,
     clip_costs,
     get_duration_cost_batch_sampler,
-    lattice_cells,
     rnnt_batch_cost,
 )
 from nemo.collections.asr.parts.utils.data_leak_check import check_data_leaks, collect_manifests
@@ -465,10 +464,10 @@ def apply_fused_cells_budget(asr_model, cfg):
     """Group the joint's fused sub-batches by padded lattice cells.
 
     Set by ``model.joint.fused_cells_budget``: absent or null keeps the fixed
-    ``fused_batch_size`` stride. ``auto`` resolves to the largest single-clip
-    lattice T * (U+1) in the training set, read off the cost sampler, so a
-    sub-batch of short clips never builds a bigger joint table than the worst
-    clip already does alone. An integer is used as is.
+    ``fused_batch_size`` stride. ``auto`` hands the joint the cost sampler's
+    budget and weights (``RNNTJoint.set_fused_cells_headroom``), so each batch
+    spends on grouping only what its own cost left under the budget, scaled by
+    ``model.joint.fused_cells_safety``. An integer is a fixed cell count.
 
     Must run after the training dataloader is final, since ``auto`` reads its
     sampler.
@@ -477,7 +476,8 @@ def apply_fused_cells_budget(asr_model, cfg):
         asr_model: model whose ``joint`` and ``_train_dl`` are set up.
         cfg: full config.
     """
-    budget = (cfg.model.get("joint", None) or {}).get("fused_cells_budget", None)
+    joint_cfg = cfg.model.get("joint", None) or {}
+    budget = joint_cfg.get("fused_cells_budget", None)
     if budget is None:
         return
     if budget == "auto":
@@ -486,21 +486,26 @@ def apply_fused_cells_budget(asr_model, cfg):
             raise ValueError(
                 "model.joint.fused_cells_budget: auto needs cost batching with the duration_tokens cost model "
                 "(model.train_ds.cost_batching.enabled: true, model.train_ds.cost_batching.cost_model: "
-                "duration_tokens), so the training set's label lengths are known."
+                "duration_tokens), whose budget and weights it reuses."
             )
-        cells = lattice_cells(sampler.durations, sampler.token_counts, _encoder_frame_seconds(asr_model))
-        budget, source = int(cells.max()), "auto: largest single-clip lattice"
+        safety = float(joint_cfg.get("fused_cells_safety", 0.75))
+        budget_cells = sampler.budget / _encoder_frame_seconds(asr_model)
+        asr_model.joint.set_fused_cells_headroom(budget_cells, sampler.sum_weight, sampler.max_weight, safety)
+        source = (
+            f"auto: per batch {safety} x ({budget_cells:.0f} - {sampler.sum_weight} x batch cells) "
+            f"/ {sampler.max_weight}"
+        )
     elif isinstance(budget, int) and not isinstance(budget, bool):
-        source = "explicit"
+        asr_model.joint.set_fused_cells_budget(budget)
+        source = f"{budget} cells"
     else:
         raise ValueError(f"model.joint.fused_cells_budget must be null, auto or an integer, got {budget!r}")
-    asr_model.joint.set_fused_cells_budget(budget)
     if "joint" in asr_model.cfg:
         with open_dict(asr_model.cfg.joint):
             asr_model.cfg.joint.fused_cells_budget = budget
     logging.info(
-        f"Joint fused_cells_budget set to {budget} cells ({source}; "
-        f"fused_batch_size {asr_model.joint.fused_batch_size} caps clips per sub-batch)"
+        f"Joint fused_cells_budget {source}; "
+        f"fused_batch_size {asr_model.joint.fused_batch_size} caps clips per sub-batch"
     )
 
 

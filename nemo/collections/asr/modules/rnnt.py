@@ -1483,18 +1483,52 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         # B * T_max * (U_max + 1) stays under this many cells (fused_batch_size
         # then only caps the clips per sub-batch). None = fixed stride of
         # fused_batch_size clips (upstream behaviour). Set by the training
-        # script from model.joint.fused_cells_budget.
+        # script from model.joint.fused_cells_budget: a fixed count, or the
+        # per-batch headroom of the cost sampler's model (see
+        # set_fused_cells_headroom), the two being exclusive.
         self._fused_cells_budget = None
+        self._fused_cells_headroom = None
 
     @property
     def fused_cells_budget(self):
         return self._fused_cells_budget
 
+    @property
+    def fused_cells_headroom(self):
+        return self._fused_cells_headroom
+
     def set_fused_cells_budget(self, cells: Optional[int]):
-        """Group fused sub-batches by padded lattice cells instead of a fixed clip count (None = off)."""
+        """Group fused sub-batches by a fixed padded-lattice cell count instead of a clip count (None = off)."""
         if cells is not None and int(cells) < 1:
             raise ValueError(f"fused_cells_budget must be at least 1 cell, got {cells}")
         self._fused_cells_budget = None if cells is None else int(cells)
+        if cells is not None:
+            self._fused_cells_headroom = None
+
+    def set_fused_cells_headroom(self, budget_cells: float, sum_weight: float, max_weight: float, safety: float = 0.75):
+        """Group fused sub-batches by what the cost sampler's budget leaves for the joint transient.
+
+        The cost sampler fills a batch while ``sum_weight * sum_i c_i +
+        max_weight * max_i c_i <= budget``, c_i = d_i * (U_i + 1), and the VRAM
+        model behind it is affine in those two terms: the sum term is the
+        resident activations of every clip, the max term the transient the
+        joint and loss build for one clip at a time. A fused sub-batch's padded
+        lattice plays that second role, so per batch the slicer may spend
+        ``safety * (budget_cells - sum_weight * sum_i cells_i) / max_weight``
+        cells on it, all in lattice cells (``budget_cells`` is the sampler's
+        budget times the encoder frame rate, ``cells_i = T_i * (U_i + 1)``).
+        A batch the sampler filled to the frontier therefore falls back to one
+        clip at a time, which is where the fit was measured, while a batch of
+        short clips gets grouped. ``safety`` < 1 absorbs the transient costing
+        more per cell than the fit's max term says (measured 1.3x on this card).
+        """
+        if budget_cells <= 0 or sum_weight <= 0 or max_weight <= 0 or not 0 < safety <= 1:
+            raise ValueError(
+                f"fused cells headroom needs budget_cells, sum_weight, max_weight > 0 and 0 < safety <= 1, "
+                f"got {budget_cells}, {sum_weight}, {max_weight}, {safety}"
+            )
+        self._fused_cells_headroom = (float(budget_cells), float(sum_weight), float(max_weight), float(safety))
+        self._fused_cells_budget = None
 
     def _fused_sub_batches(self, encoder_lengths: torch.Tensor, transcript_lengths: torch.Tensor):
         """Slices of the batch the fused joint processes one at a time, as (begin, end, max_t, max_u).
@@ -1503,27 +1537,33 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         the two ``.max()`` reads per sub-batch the fixed loop used to do.
 
         Without a cells budget this is the upstream stride of
-        ``fused_batch_size`` clips. With one, consecutive clips are merged
-        while their padded lattice ``n * max_t * (max_u + 1)`` fits the budget
-        and ``n <= fused_batch_size``; a clip that alone exceeds the budget
-        still goes alone. Grouping consecutive clips keeps every slice a
-        zero-copy ``narrow`` and relies on the cost sampler, which emits each
-        batch sorted by duration, so neighbours pad each other little. The
-        loss is a per-utterance sum, so the grouping does not change it.
+        ``fused_batch_size`` clips. With one (fixed, or the per-batch headroom
+        of set_fused_cells_headroom), consecutive clips are merged while their
+        padded lattice ``n * max_t * (max_u + 1)`` fits the budget and
+        ``n <= fused_batch_size``; a clip that alone exceeds the budget still
+        goes alone. Grouping consecutive clips keeps every slice a zero-copy
+        ``narrow`` and relies on the cost sampler, which emits each batch
+        sorted by duration, so neighbours pad each other little. The loss is a
+        per-utterance sum, so the grouping does not change it.
         """
         enc_lens = encoder_lengths.tolist()
         tgt_lens = transcript_lengths.tolist()
         batch_size = len(enc_lens)
         stride = int(self._fused_batch_size)
+        budget = self._fused_cells_budget
+        if self._fused_cells_headroom is not None:
+            budget_cells, sum_weight, max_weight, safety = self._fused_cells_headroom
+            batch_cells = sum(t * (u + 1) for t, u in zip(enc_lens, tgt_lens))
+            budget = max(0.0, safety * (budget_cells - sum_weight * batch_cells) / max_weight)
         begin = 0
         while begin < batch_size:
             end = min(begin + stride, batch_size)
-            if self._fused_cells_budget is not None:
+            if budget is not None:
                 max_t, max_u = enc_lens[begin], tgt_lens[begin]
                 end = begin + 1
                 while end < begin + stride and end < batch_size:
                     t, u = max(max_t, enc_lens[end]), max(max_u, tgt_lens[end])
-                    if (end - begin + 1) * t * (u + 1) > self._fused_cells_budget:
+                    if (end - begin + 1) * t * (u + 1) > budget:
                         break
                     max_t, max_u, end = t, u, end + 1
             else:

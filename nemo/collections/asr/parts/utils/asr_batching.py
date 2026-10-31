@@ -280,10 +280,12 @@ def get_semi_sorted_batch_sampler(
 # above 19800, so the model separates them cleanly. Re-fit it (and re-run
 # perso/oom_margin_check.sh) if the GPU, the model, the number of trainable
 # encoder layers, joint.fused_batch_size or joint.fused_cells_budget changes.
-# The fit predates the cells budget; oom_margin_check.sh re-run with it on
-# (2026-10-31, auto budget, fused_batch_size 16) peaked at 20081 MiB
-# allocated on the worst batch (cost 14298), under the fit's 21800 at 15000,
-# so the frontier above still holds.
+# The cells budget leans on this fit directly: joint.fused_cells_budget: auto
+# spends on a fused sub-batch only the max-term headroom the batch's sum term
+# leaves under the budget (RNNTJoint.set_fused_cells_headroom), so a batch at
+# the frontier is still processed one clip at a time. The first auto (a fixed
+# count, the training set's largest single-clip lattice) ignored the sum term
+# and OOMed on 2026-10-31; see the joint block of perso/training_config.yaml.
 #
 # The per-clip term is selectable (cost_batching.cost_model), because d^2 only
 # holds while U tracks T. The v2 corpus breaks that: nine voices read at 5.1 to
