@@ -366,6 +366,22 @@ def assert_effective_values(cfg: DictConfig, asr_model, trainer) -> None:
             _check(failures, "joint.long_path_chunk_frames", int(joint_cfg.get("long_path_chunk_frames")),
                    getattr(joint, "long_path_chunk_frames", None))
 
+    # --- fused sub-batching -------------------------------------------------
+    # Both set live on the restored joint. `auto` resolves at startup to a cell
+    # count off the train sampler, so only its presence can be checked.
+    if joint_cfg is not None:
+        joint = getattr(asr_model, "joint", None)
+        if joint_cfg.get("fused_batch_size", None) is not None:
+            _check(failures, "joint.fused_batch_size", int(joint_cfg.get("fused_batch_size")),
+                   getattr(joint, "fused_batch_size", None))
+        cells_cfg = joint_cfg.get("fused_cells_budget", None)
+        live_cells = getattr(joint, "fused_cells_budget", None)
+        if cells_cfg == "auto":
+            _check(failures, "joint.fused_cells_budget (auto resolved)", True,
+                   isinstance(live_cells, int) and live_cells >= 1)
+        elif cells_cfg is not None:
+            _check(failures, "joint.fused_cells_budget", int(cells_cfg), live_cells)
+
     # --- dataloader knobs NeMo is known to drop -----------------------------
     if train_dl is not None:
         train_ds = cfg.model.train_ds
