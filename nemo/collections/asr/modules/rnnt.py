@@ -1478,6 +1478,59 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         self.long_path_min_cells = None
         self.long_path_chunk_frames = 64
 
+        # Adaptive fused sub-batching: when set, the fused loop groups
+        # consecutive clips into sub-batches whose padded lattice
+        # B * T_max * (U_max + 1) stays under this many cells (fused_batch_size
+        # then only caps the clips per sub-batch). None = fixed stride of
+        # fused_batch_size clips (upstream behaviour). Set by the training
+        # script from model.joint.fused_cells_budget.
+        self._fused_cells_budget = None
+
+    @property
+    def fused_cells_budget(self):
+        return self._fused_cells_budget
+
+    def set_fused_cells_budget(self, cells: Optional[int]):
+        """Group fused sub-batches by padded lattice cells instead of a fixed clip count (None = off)."""
+        if cells is not None and int(cells) < 1:
+            raise ValueError(f"fused_cells_budget must be at least 1 cell, got {cells}")
+        self._fused_cells_budget = None if cells is None else int(cells)
+
+    def _fused_sub_batches(self, encoder_lengths: torch.Tensor, transcript_lengths: torch.Tensor):
+        """Slices of the batch the fused joint processes one at a time, as (begin, end, max_t, max_u).
+
+        One host sync for the whole batch (both length vectors) instead of
+        the two ``.max()`` reads per sub-batch the fixed loop used to do.
+
+        Without a cells budget this is the upstream stride of
+        ``fused_batch_size`` clips. With one, consecutive clips are merged
+        while their padded lattice ``n * max_t * (max_u + 1)`` fits the budget
+        and ``n <= fused_batch_size``; a clip that alone exceeds the budget
+        still goes alone. Grouping consecutive clips keeps every slice a
+        zero-copy ``narrow`` and relies on the cost sampler, which emits each
+        batch sorted by duration, so neighbours pad each other little. The
+        loss is a per-utterance sum, so the grouping does not change it.
+        """
+        enc_lens = encoder_lengths.tolist()
+        tgt_lens = transcript_lengths.tolist()
+        batch_size = len(enc_lens)
+        stride = int(self._fused_batch_size)
+        begin = 0
+        while begin < batch_size:
+            end = min(begin + stride, batch_size)
+            if self._fused_cells_budget is not None:
+                max_t, max_u = enc_lens[begin], tgt_lens[begin]
+                end = begin + 1
+                while end < begin + stride and end < batch_size:
+                    t, u = max(max_t, enc_lens[end]), max(max_u, tgt_lens[end])
+                    if (end - begin + 1) * t * (u + 1) > self._fused_cells_budget:
+                        break
+                    max_t, max_u, end = t, u, end + 1
+            else:
+                max_t, max_u = max(enc_lens[begin:end]), max(tgt_lens[begin:end])
+            yield begin, end, int(max_t), int(max_u)
+            begin = end
+
     @typecheck()
     def forward(
         self,
@@ -1523,13 +1576,11 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
             losses = []
             wers, wer_nums, wer_denoms = [], [], []
             target_lengths = []
-            batch_size = int(encoder_outputs.size(0))  # actual batch size
 
-            # Iterate over batch using fused_batch_size steps
-            for batch_idx in range(0, batch_size, self._fused_batch_size):
-                begin = batch_idx
-                end = min(begin + self._fused_batch_size, batch_size)
-
+            # Iterate over the batch in fused sub-batches (fixed stride or cells budget)
+            for begin, end, max_sub_enc_length, max_sub_transcript_length in self._fused_sub_batches(
+                encoder_lengths, transcript_lengths
+            ):
                 # Extract the sub batch inputs
                 # sub_enc = encoder_outputs[begin:end, ...]
                 # sub_transcripts = transcripts[begin:end, ...]
@@ -1540,15 +1591,14 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
                 sub_transcript_lens = transcript_lengths[begin:end]
 
                 # Sub transcripts does not need the full padding of the entire batch
-                # Therefore reduce the decoder time steps to match
-                max_sub_enc_length = sub_enc_lens.max()
-                max_sub_transcript_length = sub_transcript_lens.max()
+                # Therefore reduce the decoder time steps to match (the maxima
+                # come from the slicer, already on the host)
 
                 if decoder_outputs is not None:
                     # Reduce encoder length to preserve computation
                     # Encoder: [sub-batch, T, D] -> [sub-batch, T', D]; T' < T
                     if sub_enc.shape[1] != max_sub_enc_length:
-                        sub_enc = sub_enc.narrow(dim=1, start=0, length=int(max_sub_enc_length))
+                        sub_enc = sub_enc.narrow(dim=1, start=0, length=max_sub_enc_length)
 
                     # sub_dec = decoder_outputs[begin:end, ...]  # [sub-batch, U, D]
                     sub_dec = decoder_outputs.narrow(dim=0, start=begin, length=int(end - begin))  # [sub-batch, U, D]
@@ -1556,12 +1606,12 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
                     # Reduce decoder length to preserve computation
                     # Decoder: [sub-batch, U, D] -> [sub-batch, U', D]; U' < U
                     if sub_dec.shape[1] != max_sub_transcript_length + 1:
-                        sub_dec = sub_dec.narrow(dim=1, start=0, length=int(max_sub_transcript_length + 1))
+                        sub_dec = sub_dec.narrow(dim=1, start=0, length=max_sub_transcript_length + 1)
 
                     # Reduce transcript length to correct alignment
                     # Transcript: [sub-batch, L] -> [sub-batch, L']; L' <= L
                     if sub_transcripts.shape[1] != max_sub_transcript_length:
-                        sub_transcripts = sub_transcripts.narrow(dim=1, start=0, length=int(max_sub_transcript_length))
+                        sub_transcripts = sub_transcripts.narrow(dim=1, start=0, length=max_sub_transcript_length)
 
                     if self._takes_long_path(sub_enc.shape[1], sub_dec.shape[1]):
                         loss_batch = self._long_path_loss(sub_enc, sub_dec, sub_transcripts, sub_enc_lens, sub_transcript_lens)
@@ -2115,13 +2165,11 @@ class SampledRNNTJoint(RNNTJoint):
         losses = []
         wers, wer_nums, wer_denoms = [], [], []
         target_lengths = []
-        batch_size = int(encoder_outputs.size(0))  # actual batch size
 
-        # Iterate over batch using fused_batch_size steps
-        for batch_idx in range(0, batch_size, self._fused_batch_size):
-            begin = batch_idx
-            end = min(begin + self._fused_batch_size, batch_size)
-
+        # Iterate over the batch in fused sub-batches (fixed stride or cells budget)
+        for begin, end, max_sub_enc_length, max_sub_transcript_length in self._fused_sub_batches(
+            encoder_lengths, transcript_lengths
+        ):
             # Extract the sub batch inputs
             # sub_enc = encoder_outputs[begin:end, ...]
             # sub_transcripts = transcripts[begin:end, ...]
@@ -2132,15 +2180,14 @@ class SampledRNNTJoint(RNNTJoint):
             sub_transcript_lens = transcript_lengths[begin:end]
 
             # Sub transcripts does not need the full padding of the entire batch
-            # Therefore reduce the decoder time steps to match
-            max_sub_enc_length = sub_enc_lens.max()
-            max_sub_transcript_length = sub_transcript_lens.max()
+            # Therefore reduce the decoder time steps to match (the maxima
+            # come from the slicer, already on the host)
 
             if decoder_outputs is not None:
                 # Reduce encoder length to preserve computation
                 # Encoder: [sub-batch, T, D] -> [sub-batch, T', D]; T' < T
                 if sub_enc.shape[1] != max_sub_enc_length:
-                    sub_enc = sub_enc.narrow(dim=1, start=0, length=int(max_sub_enc_length))
+                    sub_enc = sub_enc.narrow(dim=1, start=0, length=max_sub_enc_length)
 
                 # sub_dec = decoder_outputs[begin:end, ...]  # [sub-batch, U, D]
                 sub_dec = decoder_outputs.narrow(dim=0, start=begin, length=int(end - begin))  # [sub-batch, U, D]
@@ -2148,12 +2195,12 @@ class SampledRNNTJoint(RNNTJoint):
                 # Reduce decoder length to preserve computation
                 # Decoder: [sub-batch, U, D] -> [sub-batch, U', D]; U' < U
                 if sub_dec.shape[1] != max_sub_transcript_length + 1:
-                    sub_dec = sub_dec.narrow(dim=1, start=0, length=int(max_sub_transcript_length + 1))
+                    sub_dec = sub_dec.narrow(dim=1, start=0, length=max_sub_transcript_length + 1)
 
                 # Reduce transcript length to correct alignment
                 # Transcript: [sub-batch, L] -> [sub-batch, L']; L' <= L
                 if sub_transcripts.shape[1] != max_sub_transcript_length:
-                    sub_transcripts = sub_transcripts.narrow(dim=1, start=0, length=int(max_sub_transcript_length))
+                    sub_transcripts = sub_transcripts.narrow(dim=1, start=0, length=max_sub_transcript_length)
 
                 # Perform sampled joint => [sub-batch, T', U', {V' < V} + 1}]
                 sub_joint, sub_transcripts_remapped = self.sampled_joint(
