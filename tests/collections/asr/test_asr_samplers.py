@@ -737,40 +737,95 @@ class TestFusedCellsBudget:
         assert torch.allclose(alone_loss, grouped_loss, atol=1e-5)
         assert torch.allclose(alone_grad, grouped_grad, atol=1e-5)
 
+    # 12.5 Hz encoder frames, so the sampler's 15000 s budget is 15000 * 12.5 lattice cells.
+    HEADROOM = (15000 * 12.5, 0.2366, 0.1432, 0.75)
+
+    def _headroom_slices(self, durations, tokens):
+        joint = self._joint()
+        joint.set_fused_cells_headroom(*self.HEADROOM)
+        enc = torch.tensor([round(d * 12.5) for d in durations])
+        return [(b, e) for b, e, _, _ in joint._fused_sub_batches(enc, torch.tensor(tokens))]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "durations, tokens, expected",
+        [
+            # Short clips leave most of the budget to the transient: one sub-batch.
+            ([7.0] * 16, [47] * 16, [(0, 16)]),
+            # A batch filled to the frontier leaves nothing: one clip at a time.
+            ([28.0] * 11, [190] * 11, [(i, i + 1) for i in range(11)]),
+            ([20 + 0.5 * i for i in range(12)], [130 + 3 * i for i in range(12)], [(0, 7), (7, 12)]),
+            # A lone clip over any headroom still goes.
+            ([70.0], [500], [(0, 1)]),
+        ],
+    )
+    def test_headroom_budget_follows_what_the_batch_cost_left(self, durations, tokens, expected):
+        assert self._headroom_slices(durations, tokens) == expected
+
+    @pytest.mark.unit
+    def test_headroom_and_fixed_budget_clear_each_other(self):
+        joint = self._joint()
+        joint.set_fused_cells_headroom(*self.HEADROOM)
+        assert joint.fused_cells_headroom == self.HEADROOM and joint.fused_cells_budget is None
+        joint.set_fused_cells_budget(1000)
+        assert joint.fused_cells_headroom is None and joint.fused_cells_budget == 1000
+        joint.set_fused_cells_headroom(*self.HEADROOM)
+        assert joint.fused_cells_headroom == self.HEADROOM and joint.fused_cells_budget is None
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("bad", [{'safety': 0}, {'safety': 1.5}, {'max_weight': 0}])
+    def test_bad_headroom_is_refused(self, bad):
+        args = dict(zip(('budget_cells', 'sum_weight', 'max_weight', 'safety'), self.HEADROOM), **bad)
+        with pytest.raises(ValueError, match="fused cells headroom"):
+            self._joint().set_fused_cells_headroom(**args)
+
     @staticmethod
-    def _fake_model(budget, token_counts=(5, 40, 12)):
+    def _fake_model(budget, token_counts=(5, 40, 12), safety=None):
         durations = [1.0, 3.2, 2.0]
         cost_model = "duration_sq" if token_counts is None else "duration_tokens"
         sampler = DurationCostBatchSampler(
-            durations=durations, budget=1e9, token_counts=token_counts, cost_model=cost_model, shuffle=False
+            durations=durations,
+            budget=15000,
+            token_counts=token_counts,
+            cost_model=cost_model,
+            sum_weight=0.2366,
+            max_weight=0.1432,
+            shuffle=False,
         )
         model_cfg = OmegaConf.create(
             {'preprocessor': {'window_stride': 0.01}, 'encoder': {'subsampling_factor': 8}, 'joint': {}}
         )
         OmegaConf.set_struct(model_cfg, True)  # like a restored checkpoint: new keys need open_dict
         seen = []
-        joint = SimpleNamespace(fused_batch_size=16, set_fused_cells_budget=seen.append)
+        joint = SimpleNamespace(
+            fused_batch_size=16,
+            set_fused_cells_budget=lambda cells: seen.append(("budget", cells)),
+            set_fused_cells_headroom=lambda *args: seen.append(("headroom", args)),
+        )
         model = SimpleNamespace(_train_dl=SimpleNamespace(batch_sampler=sampler), cfg=model_cfg, joint=joint)
-        cfg = OmegaConf.create({'model': {'joint': {'fused_cells_budget': budget}}})
+        joint_cfg = {'fused_cells_budget': budget}
+        if safety is not None:
+            joint_cfg['fused_cells_safety'] = safety
+        cfg = OmegaConf.create({'model': {'joint': joint_cfg}})
         return model, cfg, seen
 
     @pytest.mark.unit
-    def test_auto_resolves_to_the_largest_single_clip_lattice(self):
+    @pytest.mark.parametrize("safety, expected_safety", [(None, 0.75), (0.5, 0.5)])
+    def test_auto_arms_the_cost_model_headroom(self, safety, expected_safety):
         module = _load_finetune_module()
-        model, cfg, seen = self._fake_model("auto")
+        model, cfg, seen = self._fake_model("auto", safety=safety)
         module.apply_fused_cells_budget(model, cfg)
-        # 0.08 s frames: 3.2 s = 40 frames x 41 rows, the biggest of the three.
-        expected = int(lattice_cells([1.0, 3.2, 2.0], [5, 40, 12], 0.08).max())
-        assert expected == 40 * 41
-        assert seen == [expected]
-        assert model.cfg.joint.fused_cells_budget == expected
+        frame_seconds = module._encoder_frame_seconds(model)
+        assert frame_seconds == pytest.approx(0.08)  # 10 ms hop x 8 subsampling
+        assert seen == [("headroom", (pytest.approx(15000 / frame_seconds), 0.2366, 0.1432, expected_safety))]
+        assert model.cfg.joint.fused_cells_budget == "auto"
 
     @pytest.mark.unit
     def test_an_integer_budget_passes_through_and_null_does_nothing(self):
         module = _load_finetune_module()
         model, cfg, seen = self._fake_model(5000)
         module.apply_fused_cells_budget(model, cfg)
-        assert seen == [5000]
+        assert seen == [("budget", 5000)]
         model, cfg, seen = self._fake_model(None)
         module.apply_fused_cells_budget(model, cfg)
         assert seen == [] and "fused_cells_budget" not in model.cfg.joint
