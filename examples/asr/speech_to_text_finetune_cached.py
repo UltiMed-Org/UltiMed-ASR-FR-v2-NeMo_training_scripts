@@ -469,7 +469,7 @@ def apply_fused_cells_budget(asr_model, cfg):
     budget and weights (``RNNTJoint.set_fused_cells_headroom``), so each batch
     spends on grouping only what its own cost left under the budget, scaled by
     ``model.joint.fused_cells_safety`` and capped at
-    ``model.joint.fused_cells_cap`` cells per sub-batch (default 150000, null
+    ``model.joint.fused_cells_cap`` cells per sub-batch (default FUSED_CELLS_CAP_DEFAULT, null
     = uncapped), which bounds the joint's largest single logits allocation.
     An integer is a fixed cell count.
 
