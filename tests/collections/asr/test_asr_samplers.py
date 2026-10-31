@@ -652,3 +652,134 @@ class TestLossWeighting:
         model, _ = self._fake_model(sampler_mean=6.2)
         with pytest.raises(ValueError, match="per_token or per_batch"):
             module.apply_loss_weighting(model, self._cfg("per_clip"))
+
+
+class TestFusedCellsBudget:
+    """``model.joint.fused_cells_budget``: fused sub-batches grouped by padded lattice cells."""
+
+    ENC = [10, 12, 13, 40, 41, 100]
+    TGT = [3, 4, 3, 10, 12, 30]
+
+    @staticmethod
+    def _joint(fused_batch_size=16, budget=None):
+        from nemo.collections.asr.modules.rnnt import RNNTJoint
+
+        jointnet = {'encoder_hidden': 4, 'pred_hidden': 4, 'joint_hidden': 4, 'activation': 'relu'}
+        joint = RNNTJoint(jointnet=jointnet, num_classes=5, fuse_loss_wer=True, fused_batch_size=fused_batch_size)
+        joint.set_fused_cells_budget(budget)
+        return joint
+
+    def _slices(self, fused_batch_size, budget):
+        joint = self._joint(fused_batch_size, budget)
+        return list(joint._fused_sub_batches(torch.tensor(self.ENC), torch.tensor(self.TGT)))
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "fused_batch_size, budget, expected",
+        [
+            (16, None, [(0, 6, 100, 30)]),
+            (4, None, [(0, 4, 40, 10), (4, 6, 100, 30)]),
+            # 3 * 13 * (4+1) = 195 fits; the 40-frame clip alone (440) is over budget and still goes.
+            (16, 195, [(0, 3, 13, 4), (3, 4, 40, 10), (4, 5, 41, 12), (5, 6, 100, 30)]),
+            # A huge budget leaves fused_batch_size as the only cap.
+            (2, 10**6, [(0, 2, 12, 4), (2, 4, 40, 10), (4, 6, 100, 30)]),
+            (1, None, [(i, i + 1, t, u) for i, (t, u) in enumerate(zip(ENC, TGT))]),
+        ],
+    )
+    def test_sub_batches_follow_the_stride_or_the_budget(self, fused_batch_size, budget, expected):
+        slices = self._slices(fused_batch_size, budget)
+        assert slices == expected
+        for begin, end, max_t, max_u in slices:
+            assert max_t == max(self.ENC[begin:end]) and max_u == max(self.TGT[begin:end])
+            if budget is not None and end - begin > 1:
+                assert (end - begin) * max_t * (max_u + 1) <= budget
+
+    @pytest.mark.unit
+    def test_budget_below_one_cell_is_refused(self):
+        with pytest.raises(ValueError, match="at least 1 cell"):
+            self._joint().set_fused_cells_budget(0)
+
+    @pytest.mark.unit
+    def test_grouped_sub_batches_give_the_same_loss_and_gradient_as_one_clip_at_a_time(self):
+        from nemo.collections.asr.losses.rnnt import RNNTLoss
+
+        torch.manual_seed(0)
+        enc_lens = torch.tensor([8, 9, 10, 20, 15])
+        tgt_lens = torch.tensor([2, 3, 3, 6, 4])
+        encoder_outputs = torch.randn(5, 4, 20)
+        decoder_outputs = torch.randn(5, 4, 7)
+        transcripts = torch.randint(0, 5, (5, 6))
+
+        def run(fused_batch_size, budget):
+            torch.manual_seed(1)  # same joint weights for both runs
+            joint = self._joint(fused_batch_size, budget).eval()
+            joint.set_loss(RNNTLoss(num_classes=5, loss_name='pytorch', reduction='sum'))
+            # forward only checks it is set; compute_wer=False never touches it.
+            joint.set_wer(SimpleNamespace())
+            enc = encoder_outputs.clone().requires_grad_(True)
+            loss, *_ = joint(
+                encoder_outputs=enc,
+                decoder_outputs=decoder_outputs,
+                encoder_lengths=enc_lens,
+                transcripts=transcripts,
+                transcript_lengths=tgt_lens,
+                compute_wer=False,
+            )
+            loss.backward()
+            slices = list(joint._fused_sub_batches(enc_lens, tgt_lens))
+            return loss.detach(), enc.grad, slices
+
+        alone_loss, alone_grad, alone_slices = run(1, None)
+        # 3 * 10 * (3+1) = 120 cells: the first three clips share one sub-batch.
+        grouped_loss, grouped_grad, grouped_slices = run(16, 120)
+        assert len(alone_slices) == 5
+        assert grouped_slices[0] == (0, 3, 10, 3) and len(grouped_slices) == 3
+        assert torch.allclose(alone_loss, grouped_loss, atol=1e-5)
+        assert torch.allclose(alone_grad, grouped_grad, atol=1e-5)
+
+    @staticmethod
+    def _fake_model(budget, token_counts=(5, 40, 12)):
+        durations = [1.0, 3.2, 2.0]
+        cost_model = "duration_sq" if token_counts is None else "duration_tokens"
+        sampler = DurationCostBatchSampler(
+            durations=durations, budget=1e9, token_counts=token_counts, cost_model=cost_model, shuffle=False
+        )
+        model_cfg = OmegaConf.create(
+            {'preprocessor': {'window_stride': 0.01}, 'encoder': {'subsampling_factor': 8}, 'joint': {}}
+        )
+        OmegaConf.set_struct(model_cfg, True)  # like a restored checkpoint: new keys need open_dict
+        seen = []
+        joint = SimpleNamespace(fused_batch_size=16, set_fused_cells_budget=seen.append)
+        model = SimpleNamespace(_train_dl=SimpleNamespace(batch_sampler=sampler), cfg=model_cfg, joint=joint)
+        cfg = OmegaConf.create({'model': {'joint': {'fused_cells_budget': budget}}})
+        return model, cfg, seen
+
+    @pytest.mark.unit
+    def test_auto_resolves_to_the_largest_single_clip_lattice(self):
+        module = _load_finetune_module()
+        model, cfg, seen = self._fake_model("auto")
+        module.apply_fused_cells_budget(model, cfg)
+        # 0.08 s frames: 3.2 s = 40 frames x 41 rows, the biggest of the three.
+        expected = int(lattice_cells([1.0, 3.2, 2.0], [5, 40, 12], 0.08).max())
+        assert expected == 40 * 41
+        assert seen == [expected]
+        assert model.cfg.joint.fused_cells_budget == expected
+
+    @pytest.mark.unit
+    def test_an_integer_budget_passes_through_and_null_does_nothing(self):
+        module = _load_finetune_module()
+        model, cfg, seen = self._fake_model(5000)
+        module.apply_fused_cells_budget(model, cfg)
+        assert seen == [5000]
+        model, cfg, seen = self._fake_model(None)
+        module.apply_fused_cells_budget(model, cfg)
+        assert seen == [] and "fused_cells_budget" not in model.cfg.joint
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("budget", ["auto", "big", 2.5])
+    def test_auto_without_token_counts_and_bad_values_are_refused(self, budget):
+        module = _load_finetune_module()
+        model, cfg, seen = self._fake_model(budget, token_counts=None)
+        with pytest.raises(ValueError, match="duration_tokens" if budget == "auto" else "null, auto or an integer"):
+            module.apply_fused_cells_budget(model, cfg)
+        assert seen == []
