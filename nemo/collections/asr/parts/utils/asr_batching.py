@@ -280,8 +280,10 @@ def get_semi_sorted_batch_sampler(
 # above 19800, so the model separates them cleanly. Re-fit it (and re-run
 # perso/oom_margin_check.sh) if the GPU, the model, the number of trainable
 # encoder layers, joint.fused_batch_size or joint.fused_cells_budget changes.
-# The fit predates the cells budget: oom_margin_check.sh has to be re-run with
-# it on before trusting the frontier above.
+# The fit predates the cells budget; oom_margin_check.sh re-run with it on
+# (2026-10-31, auto budget, fused_batch_size 16) peaked at 20081 MiB
+# allocated on the worst batch (cost 14298), under the fit's 21800 at 15000,
+# so the frontier above still holds.
 #
 # The per-clip term is selectable (cost_batching.cost_model), because d^2 only
 # holds while U tracks T. The v2 corpus breaks that: nine voices read at 5.1 to

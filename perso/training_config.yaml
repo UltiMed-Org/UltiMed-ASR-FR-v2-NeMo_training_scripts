@@ -297,10 +297,17 @@ model:
   # (16 = cost_batching.max_batch_size, i.e. no cap beyond the budget). Every
   # run up to 2.1.0 used the fixed stride: fused_cells_budget: null with
   # fused_batch_size: 1.
-  # TODO: GPU gate pending: gradient equality against fused_batch_size 1
-  # (perso/fp16_grad_check.py) and an oom_margin_check.sh re-run with the
-  # budget on. Gate command:
-  # NUMBA_CUDA_USE_NVIDIA_BINDING=1 .venv/bin/python perso/fp16_grad_check.py --compare fused_cells
+  # GPU gate passed 2026-10-31 (first run with it: 2.1.1-lr5e-5):
+  #   NUMBA_CUDA_USE_NVIDIA_BINDING=1 .venv/bin/python perso/fp16_grad_check.py --compare fused_cells
+  # auto resolved to 31702 cells on the drawn clips; a 6-7.6 s batch grouped
+  # 6 + 2 clips, a 10-12 s batch 3 + 2 + 1; every gradient group cosine
+  # >= 0.99992 vs fused_batch_size 1, norm within 0.25%, loss rel diff
+  # <= 1.4e-3 (bf16 GEMM batching), lone-clip batches bit-identical; peak
+  # VRAM 1.05-1.12x on the grouped short batches (padding), 1.00x alone.
+  # oom_margin_check.sh with the budget on: PASS, worst batch (5 x 38 s, cost
+  # 14298) 20081 MiB allocated, 23808 of 24564 MiB process total, i.e. the
+  # same frontier the fixed stride measured (the cost model's 21800 MiB at
+  # budget 15000 still holds).
   joint:
     fused_batch_size: 16
     fused_cells_budget: auto
