@@ -299,7 +299,8 @@ model:
   # fused_batch_size: 1.
   # TODO: GPU gate pending: gradient equality against fused_batch_size 1
   # (perso/fp16_grad_check.py) and an oom_margin_check.sh re-run with the
-  # budget on.
+  # budget on. Gate command:
+  # NUMBA_CUDA_USE_NVIDIA_BINDING=1 .venv/bin/python perso/fp16_grad_check.py --compare fused_cells
   joint:
     fused_batch_size: 16
     fused_cells_budget: auto

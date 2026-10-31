@@ -28,15 +28,34 @@ It also counts, from a hook on the joint output, the fraction of token-logit
 gradient entries below 6.1e-5, below 6e-8 and exactly zero, in both passes:
 that is the exposure the fp16 table has, and how much of it got flushed.
 
+--compare fused_cells gates the adaptive fused sub-batching
+(joint.fused_cells_budget) the same way. Pass A runs the joint one clip at a
+time (fused_batch_size 1, no budget), as every run up to 2.1.0 did; pass B
+uses the config's fused_batch_size with a cells budget, so consecutive clips
+share one padded joint+loss call. Both passes keep the config's
+joint.fp16_loss_table, set once. The math is identical (the loss is a
+per-utterance sum and padding is masked out), so the cosines should sit at 1
+and the norm ratios at 1: only the bf16 GEMM batching and the padded shapes
+differ. The budget is --fused-cells-budget, or else the largest single-clip
+lattice T * (U+1) among all the clips drawn, which mirrors training's `auto`
+(the largest in the training set). The batches are sorted by duration, as the
+cost sampler emits them, and their default buckets are short, similar clips
+so grouping happens. Per batch it prints the slices pass B used, with their
+cells, and a WARN line when every slice is a single clip (that batch proves
+nothing), plus pass B's peak VRAM over pass A's.
+
 Exit code: 0 PASS (every tensor on every batch within --cos-min / --ratio-tol),
-1 WARN, 2 skipped (CPU: the numba TDT loss needs CUDA, so --device cpu only
-checks the plumbing up to the joint output).
+1 WARN (also in fused_cells mode when no batch grouped any clips), 2 skipped
+(CPU: the numba TDT loss needs CUDA, so --device cpu only checks the plumbing
+up to the joint output, plus the fused_cells slicing).
 
 Usage (from anywhere, paths in the config resolve from the repo root, as in training):
 
     NUMBA_CUDA_USE_NVIDIA_BINDING=1 .venv/bin/python perso/fp16_grad_check.py
     # CPU plumbing smoke:
     CUDA_VISIBLE_DEVICES="" .venv/bin/python perso/fp16_grad_check.py --device cpu --bucket 4:6:1
+    # Fused sub-batching against one clip at a time:
+    NUMBA_CUDA_USE_NVIDIA_BINDING=1 .venv/bin/python perso/fp16_grad_check.py --compare fused_cells
 
 Written with Claude Code.
 """
@@ -63,9 +82,16 @@ from nemo.collections.asr.models import ASRModel
 from nemo.utils import logging
 
 from examples.asr.speech_to_text_finetune_cached import apply_freeze
+from nemo.collections.asr.parts.utils.asr_batching import _encoder_frame_seconds, lattice_cells
 from perso.evaluate_checkpoint import load_base_model
 
 FP16_MIN_NORMAL = 2.0**-14  # 6.10e-5
+# Default --bucket per --compare mode. fused_cells wants several short, similar
+# clips per batch so the budget actually groups some of them.
+DEFAULT_BUCKETS = {
+    "fp16_table": ["4:6:4", "18:22:3", "35:38:1"],
+    "fused_cells": ["4:8:8", "8:12:6", "18:22:3"],
+}
 FP16_MIN_SUBNORMAL = 2.0**-24  # 5.96e-8, half of it and below rounds to zero
 
 
@@ -79,7 +105,21 @@ def parse_args():
         action="append",
         default=None,
         help="LO:HI:N, one batch of N clips with LO <= duration <= HI seconds, about half of them PARHAF. "
-        "Repeatable. Default: 4:6:4 18:22:3 35:38:1 (the long clip stays <= 38 s so the fp32 side fits 24 GB)",
+        "Repeatable. Default: 4:6:4 18:22:3 35:38:1 (the long clip stays <= 38 s so the fp32 side fits 24 GB), "
+        "or 4:8:8 8:12:6 18:22:3 with --compare fused_cells",
+    )
+    p.add_argument(
+        "--compare",
+        choices=["fp16_table", "fused_cells"],
+        default="fp16_table",
+        help="fp16_table: fp32 vs fp16 loss table. fused_cells: fused_batch_size 1 vs the config's "
+        "fused_batch_size with a cells budget",
+    )
+    p.add_argument(
+        "--fused-cells-budget",
+        type=int,
+        default=None,
+        help="fused_cells pass B budget in lattice cells. Default: the largest single-clip lattice among the clips drawn",
     )
     p.add_argument(
         "--manifest",
@@ -96,7 +136,7 @@ def parse_args():
 
 def parse_buckets(specs):
     buckets = []
-    for spec in specs or ["4:6:4", "18:22:3", "35:38:1"]:
+    for spec in specs:
         lo, hi, n = spec.split(":")
         buckets.append((float(lo), float(hi), int(n)))
     return buckets
@@ -225,13 +265,46 @@ def encode(model, batch, device):
     return encoded, encoded_len, decoded, target_len, transcript
 
 
-def run_pass(model, fp16_table, encoded, encoded_len, decoded, target_len, transcript, groups, retain):
+def pass_variants(compare, stride, budget):
+    """The two (name, configure) passes of --compare, A first; configure(model) applies that pass's setting."""
+    if compare == "fp16_table":
+        return [(name, lambda m, on=name == "fp16": m.loss.set_tdt_fp16_table(on)) for name in ("fp32", "fp16")]
+
+    def fused(batch_size, cells):
+        def configure(m):
+            m.joint.set_fused_batch_size(batch_size)
+            m.joint.set_fused_cells_budget(cells)
+
+        return configure
+
+    return [("fused1", fused(1, None)), ("budget", fused(stride, budget))]
+
+
+def drawn_cells_budget(model, clips, loaded):
+    """Largest single-clip lattice among the drawn clips: durations from the rows, exact token counts from the loader."""
+    durations = [float(c["duration"]) for batch_clips in clips for c in batch_clips]
+    tokens = [n for batch in loaded for n in batch[3].tolist()]
+    return int(lattice_cells(durations, tokens, _encoder_frame_seconds(model)).max())
+
+
+def report_sub_batches(model, encoded_len, target_len):
+    """Print the slices the joint uses under its current fused settings; True if any holds several clips."""
+    slices = list(model.joint._fused_sub_batches(encoded_len, target_len))
+    print(f"  sub-batches: {[(begin, end) for begin, end, _, _ in slices]}")
+    print(f"  cells: {[(end - begin) * t * (u + 1) for begin, end, t, u in slices]}")
+    grouped = any(end - begin > 1 for begin, end, _, _ in slices)
+    if not grouped:
+        print("  WARN: every slice is a single clip, this batch does not exercise the grouping")
+    return grouped
+
+
+def run_pass(model, configure, encoded, encoded_len, decoded, target_len, transcript, groups, retain):
     """One joint + loss + backward on detached copies of encoder/decoder outputs.
 
     Returns (loss, {group: flat fp32 grad on CPU}, peak bytes or None).
     """
     model.zero_grad(set_to_none=True)
-    model.loss.set_tdt_fp16_table(fp16_table)
+    configure(model)
     if encoded.is_cuda:
         torch.cuda.reset_peak_memory_stats()
     enc_in = encoded.detach().requires_grad_(encoded.requires_grad)
@@ -275,6 +348,7 @@ def plumbing_only(model, batch, device):
         f"  encoder {tuple(encoded.shape)} decoder {tuple(decoded.shape)} joint {tuple(logits.shape)}, "
         f"grad through the joint output: {logits.requires_grad}"
     )
+    return encoded_len, target_len
 
 
 def main():
@@ -288,7 +362,10 @@ def main():
 
     manifests = args.manifest or list(dict.fromkeys(m for m in cfg.model.train_ds.manifest_filepath if "/v2/" in m))
     logging.info(f"Drawing clips from: {manifests}")
-    batches = select_clips(manifests, parse_buckets(args.bucket), args.seed)
+    batches = select_clips(manifests, parse_buckets(args.bucket or DEFAULT_BUCKETS[args.compare]), args.seed)
+    fused = args.compare == "fused_cells"
+    if fused:  # the cost sampler emits each batch sorted by duration, and the slices group neighbours
+        batches = [sorted(clips, key=lambda c: float(c["duration"])) for clips in batches]
 
     if nemo_override:
         model = ASRModel.restore_from(restore_path=nemo_override, map_location=torch.device(device))
@@ -309,42 +386,58 @@ def main():
     if joint_cfg.get("fused_batch_size") is not None:
         model.joint.set_fused_batch_size(joint_cfg.fused_batch_size)
     model.loss.set_tdt_omega(0.0)  # both passes, see the module docstring
+    stride = model.joint.fused_batch_size
+    if fused:
+        model.loss.set_tdt_fp16_table(bool(joint_cfg.get("fp16_loss_table", False)))
     groups = tensor_groups(model)
 
     stats = None
-    if not args.no_logit_stats:
+    if not args.no_logit_stats and not fused:  # the exposure counts are about fp16 flushing
         stats = LogitGradStats(n_durations=len(model.loss._loss.durations))
         model.joint.joint_net.register_forward_hook(stats.forward_hook)
 
-    rows, worst = [], None
+    rows, worst, grouped = [], None, False
     with tempfile.TemporaryDirectory() as tmpdir:
-        for index, clips in enumerate(batches):
+        # All batches up front: the default fused_cells budget needs every drawn clip's token count.
+        loaded = [next(iter(make_loader(model, cfg, clips, tmpdir, index))) for index, clips in enumerate(batches)]
+        budget = None
+        if fused:
+            budget = args.fused_cells_budget or drawn_cells_budget(model, batches, loaded)
+            print(f"\nfused_cells: pass B fused_batch_size {stride}, budget {budget} cells")
+        variants = pass_variants(args.compare, stride, budget)
+        (name_a, _), (name_b, configure_b) = variants
+        for index, (clips, batch) in enumerate(zip(batches, loaded)):
             durations = ", ".join(f"{c['duration']:.1f}s {c.get('category', '?')}" for c in clips)
             print(f"\n=== batch {index}: {durations}")
-            batch = next(iter(make_loader(model, cfg, clips, tmpdir, index)))
             if device == "cpu":
-                plumbing_only(model, batch, device)
+                encoded_len, target_len = plumbing_only(model, batch, device)
+                if fused:
+                    configure_b(model)
+                    grouped |= report_sub_batches(model, encoded_len, target_len)
                 continue
 
             encoded, encoded_len, decoded, target_len, transcript = encode(model, batch, device)
             results, exposure = {}, {}
-            for mode in ("fp32", "fp16"):
+            for name, configure in variants:
                 if stats:
                     stats.reset()
-                results[mode] = run_pass(
-                    model, mode == "fp16", encoded, encoded_len, decoded, target_len, transcript, groups,
-                    retain=mode == "fp32",
+                results[name] = run_pass(
+                    model, configure, encoded, encoded_len, decoded, target_len, transcript, groups,
+                    retain=name == name_a,
                 )
                 if stats:
-                    exposure[mode] = stats.fractions()
+                    exposure[name] = stats.fractions()
             del encoded, decoded
             torch.cuda.empty_cache()
 
-            (l32, g32, p32), (l16, g16, p16) = results["fp32"], results["fp16"]
+            (la, ga, pa), (lb, gb, pb) = results[name_a], results[name_b]
             print(
-                f"  loss fp32 {l32:.6f}  fp16 {l16:.6f}  rel diff {abs(l16 - l32) / max(abs(l32), 1e-30):.2e}"
-                f"  | peak fp32 {p32 / 2**30:.1f} GiB, fp16 {p16 / 2**30:.1f} GiB"
+                f"  loss {name_a} {la:.6f}  {name_b} {lb:.6f}  rel diff {abs(lb - la) / max(abs(la), 1e-30):.2e}"
+                f"  | peak {name_a} {pa / 2**30:.1f} GiB, {name_b} {pb / 2**30:.1f} GiB"
+                + (f" ({name_b}/{name_a} {pb / pa:.3f})" if fused else "")
             )
+            if fused:  # the joint still holds pass B's settings
+                grouped |= report_sub_batches(model, encoded_len, target_len)
             for mode, (normal, subnormal, zero) in exposure.items():
                 print(
                     f"  logit grad ({mode} pass): {100 * normal:.2f}% < 6.1e-5, "
@@ -352,7 +445,7 @@ def main():
                 )
             print(f"  {'tensor':<22} {'cosine':>10} {'norm ratio':>11} {'max|diff|/norm':>15}")
             for name, _ in groups:
-                cos, ratio, max_diff = compare(g32[name], g16[name])
+                cos, ratio, max_diff = compare(ga[name], gb[name])
                 ok = cos >= args.cos_min and abs(ratio - 1) <= args.ratio_tol
                 print(f"  {name:<22} {cos:>10.6f} {ratio:>11.5f} {max_diff:>15.3e}{'' if ok else '  <-- out of bounds'}")
                 # How far past the thresholds, in units of each tolerance.
@@ -364,6 +457,9 @@ def main():
     if device == "cpu":
         print("\nSKIP: plumbing OK up to the joint output. The numba TDT loss (fp32 and fp16 table) needs CUDA.")
         return 2
+    if fused and not grouped:
+        print("\nWARN: no batch grouped several clips into one slice, so the budget went untested")
+        return 1
     if all(rows):
         print(f"\nPASS: every tensor on every batch has cosine >= {args.cos_min} and norm ratio within 1 +- {args.ratio_tol}")
         return 0
