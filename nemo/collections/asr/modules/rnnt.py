@@ -1277,6 +1277,12 @@ class RNNTDecoder(rnnt_abstract.AbstractRNNTDecoder, Exportable, AdapterModuleMi
         return cfg
 
 
+# Fraction of the cost model's per-batch headroom spent on grouping fused sub-batches.
+FUSED_CELLS_SAFETY_DEFAULT = 0.75
+# Cells per fused sub-batch: bounds the contiguous logits block to ~2.5 GB (8198 vocab, bf16).
+FUSED_CELLS_CAP_DEFAULT = 150000
+
+
 class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin):
     """A Recurrent Neural Network Transducer Joint Network (RNN-T Joint Network).
     An RNN-T Joint network, comprised of a feedforward model.
@@ -1510,7 +1516,7 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         budget_cells: float,
         sum_weight: float,
         max_weight: float,
-        safety: float = 0.75,
+        safety: float = FUSED_CELLS_SAFETY_DEFAULT,
         cap: Optional[int] = None,
     ):
         """Group fused sub-batches by what the cost sampler's budget leaves for the joint transient.

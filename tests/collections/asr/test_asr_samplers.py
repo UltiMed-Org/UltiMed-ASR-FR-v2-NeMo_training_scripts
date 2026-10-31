@@ -24,6 +24,7 @@ import torch
 from omegaconf import OmegaConf
 
 from nemo.collections.asr.data import audio_to_text
+from nemo.collections.asr.modules.rnnt import FUSED_CELLS_CAP_DEFAULT, FUSED_CELLS_SAFETY_DEFAULT
 from nemo.collections.asr.parts.utils.asr_batching import (
     COST_MODEL_WEIGHTS,
     DurationCostBatchSampler,
@@ -824,7 +825,7 @@ class TestFusedCellsBudget:
         return model, cfg, seen
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("safety, expected_safety", [(None, 0.75), (0.5, 0.5)])
+    @pytest.mark.parametrize("safety, expected_safety", [(None, FUSED_CELLS_SAFETY_DEFAULT), (0.5, 0.5)])
     def test_auto_arms_the_cost_model_headroom(self, safety, expected_safety):
         module = _load_finetune_module()
         model, cfg, seen = self._fake_model("auto", safety=safety)
@@ -832,7 +833,7 @@ class TestFusedCellsBudget:
         frame_seconds = module._encoder_frame_seconds(model)
         assert frame_seconds == pytest.approx(0.08)  # 10 ms hop x 8 subsampling
         assert seen == [
-            ("headroom", (pytest.approx(15000 / frame_seconds), 0.2366, 0.1432, expected_safety), {"cap": 150000})
+            ("headroom", (pytest.approx(15000 / frame_seconds), 0.2366, 0.1432, expected_safety), {"cap": FUSED_CELLS_CAP_DEFAULT})
         ]
         assert model.cfg.joint.fused_cells_budget == "auto"
 

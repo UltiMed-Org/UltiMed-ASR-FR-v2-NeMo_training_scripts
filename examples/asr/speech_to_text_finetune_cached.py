@@ -86,6 +86,7 @@ from nemo.collections.asr.parts.utils.asr_batching import (
     rnnt_batch_cost,
 )
 from nemo.collections.asr.parts.utils.data_leak_check import check_data_leaks, collect_manifests
+from nemo.collections.asr.modules.rnnt import FUSED_CELLS_CAP_DEFAULT, FUSED_CELLS_SAFETY_DEFAULT
 from nemo.collections.asr.parts.utils.config_audit import (
     assert_all_consumed,
     assert_effective_values,
@@ -491,9 +492,9 @@ def apply_fused_cells_budget(asr_model, cfg):
                 "(model.train_ds.cost_batching.enabled: true, model.train_ds.cost_batching.cost_model: "
                 "duration_tokens), whose budget and weights it reuses."
             )
-        safety = float(joint_cfg.get("fused_cells_safety", 0.75))
+        safety = float(joint_cfg.get("fused_cells_safety", FUSED_CELLS_SAFETY_DEFAULT))
         budget_cells = sampler.budget / _encoder_frame_seconds(asr_model)
-        cap = joint_cfg.get("fused_cells_cap", 150000)
+        cap = joint_cfg.get("fused_cells_cap", FUSED_CELLS_CAP_DEFAULT)
         asr_model.joint.set_fused_cells_headroom(
             budget_cells, sampler.sum_weight, sampler.max_weight, safety, cap=cap
         )

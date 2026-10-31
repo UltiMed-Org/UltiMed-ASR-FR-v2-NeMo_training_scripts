@@ -55,6 +55,8 @@ from typing import Any, List, Optional, Sequence, Set, Tuple
 
 from omegaconf import DictConfig
 
+from nemo.collections.asr.modules.rnnt import FUSED_CELLS_CAP_DEFAULT, FUSED_CELLS_SAFETY_DEFAULT
+
 from nemo.utils import logging
 
 __all__ = [
@@ -380,9 +382,9 @@ def assert_effective_values(cfg: DictConfig, asr_model, trainer) -> None:
             headroom = getattr(joint, "fused_cells_headroom", None)
             _check(failures, "joint.fused_cells_budget (auto: headroom armed)", True, headroom is not None)
             if headroom is not None:
-                _check(failures, "joint.fused_cells_safety", float(joint_cfg.get("fused_cells_safety", 0.75)),
+                _check(failures, "joint.fused_cells_safety", float(joint_cfg.get("fused_cells_safety", FUSED_CELLS_SAFETY_DEFAULT)),
                        headroom[3])
-                cap_cfg = joint_cfg.get("fused_cells_cap", 150000)
+                cap_cfg = joint_cfg.get("fused_cells_cap", FUSED_CELLS_CAP_DEFAULT)
                 # _check skips a None config, so null (uncapped) is checked as a boolean.
                 if cap_cfg is None:
                     _check(failures, "joint.fused_cells_cap (null: uncapped)", True, headroom[4] is None)
