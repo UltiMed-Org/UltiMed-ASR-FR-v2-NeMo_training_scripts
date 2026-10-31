@@ -1505,7 +1505,14 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         if cells is not None:
             self._fused_cells_headroom = None
 
-    def set_fused_cells_headroom(self, budget_cells: float, sum_weight: float, max_weight: float, safety: float = 0.75):
+    def set_fused_cells_headroom(
+        self,
+        budget_cells: float,
+        sum_weight: float,
+        max_weight: float,
+        safety: float = 0.75,
+        cap: Optional[int] = None,
+    ):
         """Group fused sub-batches by what the cost sampler's budget leaves for the joint transient.
 
         The cost sampler fills a batch while ``sum_weight * sum_i c_i +
@@ -1521,13 +1528,33 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         clip at a time, which is where the fit was measured, while a batch of
         short clips gets grouped. ``safety`` < 1 absorbs the transient costing
         more per cell than the fit's max term says (measured 1.3x on this card).
+
+        ``cap`` (None = uncapped) is a hard ceiling on the cells of any one
+        sub-batch, applied as ``min(headroom, cap)``. The two bound different
+        things and both are needed. The cap bounds the largest single
+        allocation: the joint's logits for a sub-batch are one contiguous
+        cells x vocab x 2 bytes (bf16) block, so 150k cells with an 8198
+        vocab is about 2.5 GB, which a fragmented caching allocator can still
+        place where a 400k-550k-cell (7-8 GiB) block fails even with the
+        predicted peak in budget. The headroom bounds the predicted peak: at
+        the cost-model frontier (11 x 28 s clips) it yields ~50k cells, so
+        clips go one at a time, while pairing two 67k-cell clips there would
+        pass the cap and still push the peak to ~22.7 GB.
         """
         if budget_cells <= 0 or sum_weight <= 0 or max_weight <= 0 or not 0 < safety <= 1:
             raise ValueError(
                 f"fused cells headroom needs budget_cells, sum_weight, max_weight > 0 and 0 < safety <= 1, "
                 f"got {budget_cells}, {sum_weight}, {max_weight}, {safety}"
             )
-        self._fused_cells_headroom = (float(budget_cells), float(sum_weight), float(max_weight), float(safety))
+        if cap is not None and cap <= 0:
+            raise ValueError(f"fused cells headroom cap must be None or > 0 cells, got {cap}")
+        self._fused_cells_headroom = (
+            float(budget_cells),
+            float(sum_weight),
+            float(max_weight),
+            float(safety),
+            None if cap is None else int(cap),
+        )
         self._fused_cells_budget = None
 
     def _fused_sub_batches(self, encoder_lengths: torch.Tensor, transcript_lengths: torch.Tensor):
@@ -1538,7 +1565,7 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
 
         Without a cells budget this is the upstream stride of
         ``fused_batch_size`` clips. With one (fixed, or the per-batch headroom
-        of set_fused_cells_headroom), consecutive clips are merged while their
+        of set_fused_cells_headroom, capped by its ``cap``), consecutive clips are merged while their
         padded lattice ``n * max_t * (max_u + 1)`` fits the budget and
         ``n <= fused_batch_size``; a clip that alone exceeds the budget still
         goes alone. Grouping consecutive clips keeps every slice a zero-copy
@@ -1552,9 +1579,11 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
         stride = int(self._fused_batch_size)
         budget = self._fused_cells_budget
         if self._fused_cells_headroom is not None:
-            budget_cells, sum_weight, max_weight, safety = self._fused_cells_headroom
+            budget_cells, sum_weight, max_weight, safety, cap = self._fused_cells_headroom
             batch_cells = sum(t * (u + 1) for t, u in zip(enc_lens, tgt_lens))
             budget = max(0.0, safety * (budget_cells - sum_weight * batch_cells) / max_weight)
+            if cap is not None:
+                budget = min(budget, cap)
         begin = 0
         while begin < batch_size:
             end = min(begin + stride, batch_size)

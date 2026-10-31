@@ -369,7 +369,7 @@ def assert_effective_values(cfg: DictConfig, asr_model, trainer) -> None:
     # --- fused sub-batching -------------------------------------------------
     # Both set live on the restored joint. `auto` hands the joint the cost
     # sampler's budget and weights (per-batch headroom), so what is checked is
-    # that the headroom is armed with the configured safety factor.
+    # that the headroom is armed with the configured safety factor and cap.
     if joint_cfg is not None:
         joint = getattr(asr_model, "joint", None)
         if joint_cfg.get("fused_batch_size", None) is not None:
@@ -382,6 +382,12 @@ def assert_effective_values(cfg: DictConfig, asr_model, trainer) -> None:
             if headroom is not None:
                 _check(failures, "joint.fused_cells_safety", float(joint_cfg.get("fused_cells_safety", 0.75)),
                        headroom[3])
+                cap_cfg = joint_cfg.get("fused_cells_cap", 150000)
+                # _check skips a None config, so null (uncapped) is checked as a boolean.
+                if cap_cfg is None:
+                    _check(failures, "joint.fused_cells_cap (null: uncapped)", True, headroom[4] is None)
+                else:
+                    _check(failures, "joint.fused_cells_cap", int(cap_cfg), headroom[4])
         elif cells_cfg is not None:
             _check(failures, "joint.fused_cells_budget", int(cells_cfg), getattr(joint, "fused_cells_budget", None))
 

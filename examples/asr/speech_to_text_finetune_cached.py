@@ -467,7 +467,10 @@ def apply_fused_cells_budget(asr_model, cfg):
     ``fused_batch_size`` stride. ``auto`` hands the joint the cost sampler's
     budget and weights (``RNNTJoint.set_fused_cells_headroom``), so each batch
     spends on grouping only what its own cost left under the budget, scaled by
-    ``model.joint.fused_cells_safety``. An integer is a fixed cell count.
+    ``model.joint.fused_cells_safety`` and capped at
+    ``model.joint.fused_cells_cap`` cells per sub-batch (default 150000, null
+    = uncapped), which bounds the joint's largest single logits allocation.
+    An integer is a fixed cell count.
 
     Must run after the training dataloader is final, since ``auto`` reads its
     sampler.
@@ -490,10 +493,14 @@ def apply_fused_cells_budget(asr_model, cfg):
             )
         safety = float(joint_cfg.get("fused_cells_safety", 0.75))
         budget_cells = sampler.budget / _encoder_frame_seconds(asr_model)
-        asr_model.joint.set_fused_cells_headroom(budget_cells, sampler.sum_weight, sampler.max_weight, safety)
+        cap = joint_cfg.get("fused_cells_cap", 150000)
+        asr_model.joint.set_fused_cells_headroom(
+            budget_cells, sampler.sum_weight, sampler.max_weight, safety, cap=cap
+        )
         source = (
             f"auto: per batch {safety} x ({budget_cells:.0f} - {sampler.sum_weight} x batch cells) "
-            f"/ {sampler.max_weight}"
+            f"/ {sampler.max_weight}, "
+            + ("uncapped" if cap is None else f"capped at {cap} cells per sub-batch")
         )
     elif isinstance(budget, int) and not isinstance(budget, bool):
         asr_model.joint.set_fused_cells_budget(budget)
