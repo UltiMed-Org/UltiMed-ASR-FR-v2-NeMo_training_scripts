@@ -328,7 +328,9 @@ model:
   # predicted peak (at the frontier it yields ~50k cells, so lone clips,
   # where pairing two 67k-cell clips would pass the cap and reach 22.7 GB).
   # auto = min(headroom, fused_cells_cap); null = uncapped.
-  # TODO: ladder PASS with cap pending
+  # Ladder with the cap: PASS on 2026-10-31 16:47, peak 23791/24564 MiB (margin 773 MiB,
+  # the same as fused_batch_size 1 gave: 756 MiB), the worst batches being lone 38 s clips
+  # in both. The 12 x 19.8 s batch that killed the uncapped run peaked at 14593 MiB.
   joint:
     fused_batch_size: 16
     fused_cells_budget: auto
