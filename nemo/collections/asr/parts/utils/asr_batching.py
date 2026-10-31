@@ -286,6 +286,10 @@ def get_semi_sorted_batch_sampler(
 # the frontier is still processed one clip at a time. The first auto (a fixed
 # count, the training set's largest single-clip lattice) ignored the sum term
 # and OOMed on 2026-10-31; see the joint block of perso/training_config.yaml.
+# auto is now min(headroom, joint.fused_cells_cap): the headroom bounds the
+# predicted peak, but a sub-batch's logits are one contiguous cells x vocab
+# block, and the headroom-only auto's 7.96 GiB one failed to fit a fragmented
+# pool the same day, so the cap (150k cells, ~2.5 GB) bounds that allocation.
 #
 # The per-clip term is selectable (cost_batching.cost_model), because d^2 only
 # holds while U tracks T. The v2 corpus breaks that: nine voices read at 5.1 to

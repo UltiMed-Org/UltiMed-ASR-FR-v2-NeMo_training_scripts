@@ -315,12 +315,25 @@ model:
   # 70 s clip has a tiny sum term, a frontier batch of medium clips does not,
   # and 6 of them in one 400k-cell table on top of 20 GB resident is 27 GB.
   # The oom_margin_check.sh ladder had passed only because its fixture
-  # resolved auto from its own largest clip. TODO: re-run the ladder with the
-  # headroom auto before the next arm.
+  # resolved auto from its own largest clip.
+  # The headroom-only auto then failed the ladder (2026-10-31 16:27): on a
+  # 12 x 19.8 s batch it asked for one 7.96 GiB logits block with 15.48 GiB
+  # in use and 7.49 GiB free. The peak itself was predicted right (19.9 GB
+  # predicted, 20.3 GB allocated); what failed is that the headroom allows
+  # one sub-batch of 400k-550k cells on batches of 9-12 medium clips, and
+  # its logits (cells x 8198 vocab x 2 bytes bf16) are one contiguous block a
+  # fragmented pool cannot place. fused_cells_cap bounds that block (~2.5 GB
+  # at 150k cells) and costs no speed, since kernel efficiency saturates far
+  # below 100k cells (16 x 7 s clips are 68k); the headroom still bounds the
+  # predicted peak (at the frontier it yields ~50k cells, so lone clips,
+  # where pairing two 67k-cell clips would pass the cap and reach 22.7 GB).
+  # auto = min(headroom, fused_cells_cap); null = uncapped.
+  # TODO: ladder PASS with cap pending
   joint:
     fused_batch_size: 16
     fused_cells_budget: auto
     fused_cells_safety: 0.75
+    fused_cells_cap: 150000
     # fp16 TDT loss table (see the TODO below loss_weighting): the loss takes
     # the bf16 joint as is, runs on one fp16 copy of it with an fp32 lattice
     # and writes the gradient over that copy. GPU gate passed 2026-10-30
