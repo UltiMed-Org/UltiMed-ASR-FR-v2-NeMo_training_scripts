@@ -400,11 +400,15 @@ def apply_loss_weighting(asr_model, cfg):
     changing the budget silently changes the corpus mix.
 
     ``per_token`` switches training to the ``sum_fixed`` reduction: the summed loss
-    over one constant, the mean clips per training batch. A batch of average
-    composition then gives the same value as ``mean_batch``, so the gradient scale
-    (and ``gradient_clip_val``) keep their meaning, but the divisor no longer moves
-    with the batch. ``per_batch`` keeps NeMo's behaviour. Validation is untouched
-    either way: the reduction is switched only for the duration of a training step.
+    over one constant, the mean label tokens per training batch. A clip's loss is its
+    utterance NLL, summed over its tokens, so a batch of average composition then gives
+    the same value as ``mean_volume`` (summed loss over the batch's own token count),
+    the gradient scale (and ``gradient_clip_val``) keep their meaning, but the divisor
+    no longer moves with the batch. (Until 2026-10-31 the constant was the mean
+    *clips* per batch, which left the loss ~tokens-per-clip times too large: a train
+    loss of ~100 against ~0.5 for v1, and a gradient clipped on nearly every step.)
+    ``per_batch`` keeps NeMo's behaviour. Validation is untouched either way: the
+    reduction is switched only for the duration of a training step.
 
     Must run after the training dataloader is final (cost sampler included), since
     the normalizer is read from it.
@@ -422,12 +426,18 @@ def apply_loss_weighting(asr_model, cfg):
 
     dataloader = getattr(asr_model, "_train_dl", None)
     sampler = getattr(dataloader, "batch_sampler", None)
-    if hasattr(sampler, "stats"):
-        normalizer = sampler.stats()["clips_per_batch_mean"]
-        source = "mean clips per cost-batched training batch"
+    stats = sampler.stats() if hasattr(sampler, "stats") else {}
+    if "tokens_per_batch_mean" in stats:
+        normalizer = stats["tokens_per_batch_mean"]
+        source = "mean label tokens per cost-batched training batch"
     else:
-        normalizer = float(getattr(dataloader, "batch_size", None) or cfg.model.train_ds.batch_size)
-        source = "training batch_size"
+        samples = dataloader.dataset.manifest_processor.collection.data
+        tokens_per_clip = sum(len(s.text_tokens) for s in samples) / len(samples)
+        batch_size = stats.get("clips_per_batch_mean") or float(
+            getattr(dataloader, "batch_size", None) or cfg.model.train_ds.batch_size
+        )
+        normalizer = batch_size * tokens_per_clip
+        source = f"{batch_size:.2f} clips per batch x {tokens_per_clip:.1f} mean label tokens per clip"
     loss = asr_model.loss
     loss.fixed_normalizer = normalizer
 

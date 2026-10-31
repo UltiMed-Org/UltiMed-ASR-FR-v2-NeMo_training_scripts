@@ -313,11 +313,16 @@ model:
     long_path_chunk_frames: 64
 
   # How the training loss is reduced over a batch.
-  #   per_token: sum of clip losses / one constant, the mean clips per training
-  #     batch (read off the cost sampler at startup and logged). Every token
-  #     then weighs the same whatever it was packed with, and a batch of
-  #     average composition gives the same value as mean_batch, so the
-  #     gradient scale and gradient_clip_val keep their meaning.
+  #   per_token: sum of clip losses / one constant, the mean label tokens per
+  #     training batch (read off the cost sampler at startup and logged). Every
+  #     token then weighs the same whatever it was packed with, and since a
+  #     clip's loss is its NLL summed over its tokens, a batch of average
+  #     composition gives the same value as mean_volume (the validation
+  #     reduction), so the gradient scale and gradient_clip_val keep their
+  #     meaning. Until 2026-10-31 the constant was the mean CLIPS per batch
+  #     (~12): train_loss read ~50-140 instead of ~0.5 and the gradient was
+  #     ~tokens-per-clip times too large, so clip 1.0 bit on nearly every step.
+  #     Runs before 2.1.0 (2.0.0-probe3k included) trained that way.
   #   per_batch: NeMo's mean_batch, the v1 behaviour. With cost batching plus
   #     accumulation it weighs a lone long clip's tokens up to 16x a short
   #     clip's, and the weighting moves with budget / max_batch_size.
@@ -1859,8 +1864,8 @@ exp_manager:
   #            train_ds.max_duration. The cost sampler emits an oversized clip
   #            alone, so the longer cap costs nothing on the other batch shapes.
   #        (5) model.loss_weighting: per_token. The loss over a batch is
-  #            its summed clip losses over one constant instead of its own
-  #            clip count, so a lone long clip's tokens no longer weigh up
+  #            its summed clip losses over one constant (mean label tokens
+  #            per batch) instead of its own clip count, so a lone long clip's tokens no longer weigh up
   #            to 16x a short clip's; long-form emphasis, if wanted, goes
   #            through explicit upsampling instead.
   #        Two things the v2 numbers change and nothing in this file yet

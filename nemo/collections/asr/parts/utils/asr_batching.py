@@ -560,7 +560,12 @@ class DurationCostBatchSampler(torch.utils.data.Sampler):
                 for b in self._batches
             ]
         )
+        tokens = {}
+        if self.token_counts is not None:
+            per_batch = np.array([self.token_counts[b].sum() for b in self._batches], dtype=np.float64)
+            tokens = {'tokens_per_batch_mean': float(per_batch.mean())}
         return {
+            **tokens,
             'batches': len(self._batches),
             'samples': int(sizes.sum()),
             'clips_per_batch_mean': float(sizes.mean()),

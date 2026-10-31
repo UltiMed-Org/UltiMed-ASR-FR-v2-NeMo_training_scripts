@@ -245,6 +245,17 @@ class TestASRSamplers:
             # __len__ before iterating, so the two must agree.
             assert len(sampler) == len(list(iter(sampler)))
 
+    def test_duration_cost_sampler_stats_mean_tokens_per_batch(self):
+        # The per_token loss divisor (2026-10-31): mean label tokens per batch.
+        durations = self._durations(n=200)
+        tokens = [int(d * 6) + 1 for d in durations]
+        sampler = DurationCostBatchSampler(
+            durations=durations, budget=15000.0, token_counts=tokens, cost_model='duration_tokens'
+        )
+        expected = sum(tokens) / len(sampler)
+        assert sampler.stats()['tokens_per_batch_mean'] == pytest.approx(expected)
+        assert 'tokens_per_batch_mean' not in DurationCostBatchSampler(durations=durations, budget=15000.0).stats()
+
     def test_duration_cost_sampler_reshuffles_but_is_reproducible(self):
         durations = self._durations(n=500)
         first = DurationCostBatchSampler(durations=durations, budget=15000.0, seed=7)
@@ -572,13 +583,19 @@ class TestLossWeighting:
         assert alone == pytest.approx(crowded) == pytest.approx(1 / 6.2)
 
     @staticmethod
-    def _fake_model(sampler_mean=None, batch_size=4):
+    def _fake_model(sampler_mean=None, batch_size=4, tokens_mean=None, clip_tokens=(10, 30)):
         loss = SimpleNamespace(reduction="mean_batch", fixed_normalizer=1.0)
+        samples = [SimpleNamespace(text_tokens=[0] * n) for n in clip_tokens]
+        dataset = SimpleNamespace(manifest_processor=SimpleNamespace(collection=SimpleNamespace(data=samples)))
         if sampler_mean is None:
-            dataloader = SimpleNamespace(batch_sampler=None, batch_size=batch_size)
+            dataloader = SimpleNamespace(batch_sampler=None, batch_size=batch_size, dataset=dataset)
         else:
             stats = {"clips_per_batch_mean": sampler_mean}
-            dataloader = SimpleNamespace(batch_sampler=SimpleNamespace(stats=lambda: stats), batch_size=None)
+            if tokens_mean is not None:
+                stats["tokens_per_batch_mean"] = tokens_mean
+            dataloader = SimpleNamespace(
+                batch_sampler=SimpleNamespace(stats=lambda: stats), batch_size=None, dataset=dataset
+            )
         seen = []
 
         def training_step(batch, batch_nb):
@@ -595,9 +612,10 @@ class TestLossWeighting:
     @pytest.mark.unit
     def test_per_token_switches_only_during_the_training_step(self):
         module = _load_finetune_module()
-        model, seen = self._fake_model(sampler_mean=6.2)
+        model, seen = self._fake_model(sampler_mean=6.2, tokens_mean=310.0)
         module.apply_loss_weighting(model, self._cfg("per_token"))
-        assert model.loss.fixed_normalizer == pytest.approx(6.2)
+        # Tokens, not clips: a clip's loss is summed over its tokens (2026-10-31 fix).
+        assert model.loss.fixed_normalizer == pytest.approx(310.0)
         assert model.training_step("b", 0) == {"loss": "b"}
         assert seen == ["sum_fixed"]
         # Validation reuses the same loss object, so it must get mean_batch back.
@@ -608,7 +626,15 @@ class TestLossWeighting:
         module = _load_finetune_module()
         model, _ = self._fake_model(sampler_mean=None, batch_size=8)
         module.apply_loss_weighting(model, self._cfg("per_token"))
-        assert model.loss.fixed_normalizer == pytest.approx(8.0)
+        # 8 clips x 20 mean label tokens (clips of 10 and 30).
+        assert model.loss.fixed_normalizer == pytest.approx(160.0)
+
+    @pytest.mark.unit
+    def test_per_token_with_a_sampler_lacking_token_counts_uses_its_clip_mean(self):
+        module = _load_finetune_module()
+        model, _ = self._fake_model(sampler_mean=6.2)
+        module.apply_loss_weighting(model, self._cfg("per_token"))
+        assert model.loss.fixed_normalizer == pytest.approx(6.2 * 20)
 
     @pytest.mark.unit
     @pytest.mark.parametrize("mode", [None, "per_batch"])
