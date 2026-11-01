@@ -13,13 +13,30 @@ the shell, not from ``.env``: only training_start.sh sources that file), default
 side. A missing repo or module fails with :class:`UltimedScriptsNotFound` naming the
 path and the variable, never with a bare ImportError.
 
-What is imported is ``99_hf_release/05_normalize_text.py::normalize_label``, the exact
-function UltiMed's own manifests go through: ``ParakeetTokenizer.clean_label`` (NFC,
-NFKC fold of the characters the Parakeet vocab lacks, whitespace collapse), then
-``percent_normalize.percent_to_symbol``, then ``label_conventions.apply_label_conventions``.
-Its ParakeetTokenizer reads the dataset repo's ``utils/parakeet_vocab.txt``, the same
-file as this repo's ``perso/exports/ultimed/2026-09-01-web2/vocab.txt``. Needs ``click``
-and ``loguru`` (both in the training venv).
+Two normalizers are exposed, both built from functions imported from that repo:
+
+- :func:`ultimed_label_normalizer` is ``99_hf_release/05_normalize_text.py::normalize_label``
+  itself, the exact chain UltiMed's own manifests go through:
+  ``ParakeetTokenizer.clean_label`` (NFC, NFKC fold of the characters the Parakeet vocab
+  lacks, whitespace collapse), then ``percent_normalize.percent_to_symbol``, then the whole
+  of ``label_conventions.apply_label_conventions``.
+- :func:`general_french_label_normalizer`, what Common Voice rehearsal uses, is the same
+  chain with ``apply_label_conventions`` cut down to the steps that hold on general French:
+  titles, dates, clock times, quantities, thousands and compound numbers (in
+  ``apply_label_conventions``'s own order). The rest is medical and misfires on
+  encyclopedic sentences, measured on the 139k CV-fr labels on 2026-11-01: the
+  prefix-compound rule glued 854 labels (``néo-zélandais`` -> ``néozélandais``, ``péri
+  pendant`` -> ``péripendant``), ``normalize_spelling`` turned 44 ``colons`` (settlers)
+  into ``côlons`` (it also does ``gene`` -> ``gène``, ``Elodie`` -> ``Hélodie``), the
+  generic-lab strip deleted ``Sandoz`` from ``dit Sandoz.``, and the roman / staging rules
+  read ``type II``-like text as medical staging. Cost of skipping ``normalize_spelling``:
+  CV keeps ``œ`` (``cœur``, 1.9k labels) where UltiMed writes ``oe``. Kept steps still
+  include ``normalize_quantities``, so ``un an plus tard`` -> ``1 an plus tard`` as in
+  UltiMed.
+
+The ParakeetTokenizer reads the dataset repo's ``utils/parakeet_vocab.txt``, the same file
+as this repo's ``perso/exports/ultimed/2026-09-01-web2/vocab.txt``. Needs ``click`` and
+``loguru`` (both in the training venv).
 
 Written with Claude Code.
 """
@@ -74,6 +91,32 @@ def _load_normalize_script(root: Path):
 def _label_normalizer(root: Path) -> Callable[[str], str]:
     mod = _load_normalize_script(root)
     return functools.partial(mod.normalize_label, tok=mod.ParakeetTokenizer())
+
+
+def _general_french(text: str, mod, lc, tok) -> str:
+    text = lc.normalize_quantities(lc.normalize_clock(lc.normalize_dates(lc.expand_titles(
+        mod.percent_to_symbol(tok.clean_label(text))))))
+    return lc.normalize_thousands(lc.normalize_numbers(lc.normalize_thousands(text)))
+
+
+@functools.lru_cache(maxsize=None)
+def _general_french_normalizer(root: Path) -> Callable[[str], str]:
+    mod = _load_normalize_script(root)
+    import label_conventions  # on sys.path once the script is loaded
+
+    return functools.partial(_general_french, mod=mod, lc=label_conventions, tok=mod.ParakeetTokenizer())
+
+
+def general_french_label_normalizer() -> Callable[[str], str]:
+    """``text -> text``: the UltiMed chain minus its medical-only rules (module docstring).
+
+    >>> f = general_french_label_normalizer()
+    >>> f("M. Dupont, né en mille neuf cent quatre-vingt-dix, a vingt et un ans.")
+    'Monsieur Dupont, né en 1990, a 21 ans.'
+    >>> f("Les colons néo-zélandais du vingt-et-unième siècle, une œuvre.")
+    'Les colons néo-zélandais du vingt-et-unième siècle, une œuvre.'
+    """
+    return _general_french_normalizer(scripts_dir())
 
 
 def ultimed_label_normalizer() -> Callable[[str], str]:

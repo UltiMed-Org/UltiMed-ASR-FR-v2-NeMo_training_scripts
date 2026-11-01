@@ -108,7 +108,7 @@ branch tip is a working tree. Each commit message explains the why at length.
    French rehearsal labels are written the UltiMed way (numbers in digits: `vingt et un` -> `21`,
    `mille neuf cent quatre-vingt-dix` -> `1990`, `95 %`), using the rules of
    [UltiMed-ASR-FR-v1-scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts)
-   imported rather than copied (`perso/ultimed_scripts.py`, added with Claude Code). That repo must be
+   imported rather than copied (`perso/ultimed_scripts.py`, added with Claude Code; only the general-French subset, the medical spelling rules misfire on Common Voice). That repo must be
    cloned next to this one, or its path exported as `ULTIMED_SCRIPTS_DIR` in the shell that runs
    `perso/prepare_commonvoice_rehearsal.py` or `perso/renormalize_manifests.py --convert-number-words fr`.
 

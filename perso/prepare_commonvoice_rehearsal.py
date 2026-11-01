@@ -39,7 +39,9 @@ French labels are then rewritten with the dataset repo's UltiMed label rules
 (perso/ultimed_scripts.py, the repo found via $ULTIMED_SCRIPTS_DIR, default
 ../UltiMed-ASR-FR-v1-scripts): compound number words to digits ("vingt et un"
 -> "21", "mille neuf cent quatre-vingt-dix" -> "1990"), "95 %", titles,
-dates, so rehearsal agrees with how UltiMed writes them. A lone number word
+dates, so rehearsal agrees with how UltiMed writes them. Only the general
+French part of those rules (ultimed_scripts.general_french_label_normalizer):
+the medical ones glue "néo-zélandais" and turn settlers into "côlons". A lone number word
 ("deux", "cent") and an ordinal ("vingt-et-unième") stay spelled, as in
 UltiMed labels. Until 2026-11-01 such labels were dropped instead (11,189
 lines of the 1.x manifest), which --drop-number-words still does.

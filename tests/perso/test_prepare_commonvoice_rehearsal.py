@@ -175,12 +175,31 @@ _UNTOUCHED = [
 
 
 @needs_scripts
-def test_ultimed_label_normalizer_converts_numbers_and_keeps_ordinals():
-    convert = ultimed_scripts.ultimed_label_normalizer()
+def test_general_french_normalizer_converts_numbers_and_keeps_ordinals():
+    convert = ultimed_scripts.general_french_label_normalizer()
     for before, after in _CONVERSIONS:
         assert convert(before) == after
     for text in _UNTOUCHED:
         assert convert(text) == text
+
+
+# Medical-only UltiMed rules that misfire on encyclopedic French (seen on CV-fr 2026-11-01).
+_MEDICAL_MISFIRES = [
+    "Le quartier reçoit de nouveaux colons.",
+    "Un village néo-zélandais.",
+    "On le dit Sandoz.",
+    "Elodie a une sœur.",
+]
+
+
+@needs_scripts
+def test_general_french_normalizer_skips_medical_rules():
+    full = ultimed_scripts.ultimed_label_normalizer()
+    convert = ultimed_scripts.general_french_label_normalizer()
+    for text in _MEDICAL_MISFIRES:
+        assert convert(text) == text
+        assert full(text) != text  # the full UltiMed chain does rewrite them
+    assert renorm.NUMBER_WORD_CONVERTERS["fr"] is ultimed_scripts.general_french_label_normalizer
 
 
 def test_scripts_dir_fails_clearly_on_a_missing_path(tmp_path, monkeypatch):

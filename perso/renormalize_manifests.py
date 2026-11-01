@@ -3,9 +3,10 @@
 Per file, atomically (temp file next to it, then rename):
   1. the "text" field goes through label_charset.normalize_label_charset;
      with --convert-number-words fr it then goes through the dataset repo's
-     UltiMed label rules (ultimed_scripts.ultimed_label_normalizer, the repo
-     found via $ULTIMED_SCRIPTS_DIR, default ../UltiMed-ASR-FR-v1-scripts):
-     compound number words to digits ("vingt et un" -> "21", "mille neuf cent
+     UltiMed label rules (the repo
+     found via $ULTIMED_SCRIPTS_DIR, default ../UltiMed-ASR-FR-v1-scripts;
+     ultimed_scripts.general_french_label_normalizer, i.e. without the
+     medical-only rules): compound number words to digits ("vingt et un" -> "21", "mille neuf cent
      quatre-vingt-dix" -> "1990", "trois virgule cinq" -> "3,5"), "95 %",
      titles, dates, clock times. A lone number word ("deux", "cent") and an
      ordinal ("vingt-et-unième") stay spelled, as in UltiMed labels;
@@ -36,11 +37,11 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from label_charset import has_french_number_word, normalize_label_charset
-from ultimed_scripts import ultimed_label_normalizer
+from ultimed_scripts import general_french_label_normalizer
 
 NUMBER_WORD_FILTERS: Dict[str, Callable[[str], bool]] = {"fr": has_french_number_word}
 # Language -> factory of the label rewrite that writes its numbers in digits.
-NUMBER_WORD_CONVERTERS: Dict[str, Callable[[], Callable[[str], str]]] = {"fr": ultimed_label_normalizer}
+NUMBER_WORD_CONVERTERS: Dict[str, Callable[[], Callable[[str], str]]] = {"fr": general_french_label_normalizer}
 
 
 @dataclass
