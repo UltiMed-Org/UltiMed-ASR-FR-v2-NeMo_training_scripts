@@ -32,7 +32,7 @@ _REMOVED = "\"“”„«»()[]•­"
 _LABEL_CHARSET_FOLDS = str.maketrans({
     "’": "'", "‘": "'",  # curly single quotes -> apostrophe
     **{ch: None for ch in _REMOVED},  # double quotes, guillemets, brackets, bullet, soft hyphen
-    "–": "-", "—": "-",  # en / em dash
+    "–": "-", "\u2014": "-",  # en / em dash
     "‐": "-", "‑": "-", "−": "-",  # hyphen, nb hyphen, minus
     "…": "...",  # ellipsis
     ";": ",",

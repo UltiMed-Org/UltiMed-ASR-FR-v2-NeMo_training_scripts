@@ -21,7 +21,7 @@ def _load(name):
 prep = _load("prepare_commonvoice_rehearsal")
 
 # Characters missing from the parakeet vocab: a label with one tokenizes to <unk>.
-_OUT_OF_VOCAB = "’‘“”„«»–—…‐‑−\"()[];•­  ½¾²³×₂₄"
+_OUT_OF_VOCAB = "’‘“”„«»–\u2014…‐‑−\"()[];•­  ½¾²³×₂₄"
 
 
 def test_prepare_uses_the_shared_fold():
@@ -35,7 +35,7 @@ def test_normalize_label_charset_folds_out_of_vocab_typography():
     assert n("il dit : « oui ».") == "il dit : oui."
     assert n("dit « x », puis « y » ?") == "dit x, puis y ?"
     assert n("et puis…") == "et puis..."
-    assert n("„Straße“ – “ok” — fin") == "Straße - ok - fin"
+    assert n("„Straße“ – “ok” \u2014 fin") == "Straße - ok - fin"
     assert n("été à l'hôpital") == "été à l'hôpital"
 
 
