@@ -59,12 +59,44 @@ class _ManifestReport:
     examples: List[str] = field(default_factory=list)
 
 
-def _unk_id(tokenizer) -> int:
+def unk_id_of(tokenizer) -> int:
     """``unk_id`` is a property on NeMo's SentencePieceTokenizer, a method on raw spm."""
     unk = getattr(tokenizer, "unk_id", None)
     if unk is None:
         raise AttributeError(f"{type(tokenizer).__name__} exposes no unk_id, cannot check labels")
     return unk() if callable(unk) else unk
+
+
+def label_oov_chars(text: str, tokenizer, unk: int, char_is_oov: Dict[str, bool]) -> List[str]:
+    """The characters of ``text`` the tokenizer maps to ``<unk>`` (with repeats,
+    in order), or ``[]`` when the label tokenizes cleanly. ``char_is_oov`` is the
+    per-character cache, shared across calls; see the module docstring."""
+    chars = set(text)
+    for ch in chars - char_is_oov.keys():
+        char_is_oov[ch] = unk in tokenizer.text_to_ids(ch)
+    if not any(char_is_oov[ch] for ch in chars) or unk not in tokenizer.text_to_ids(text):
+        return []
+    return [ch for ch in text if char_is_oov[ch]]
+
+
+def load_tokenizer(path: str):
+    """NeMo SentencePieceTokenizer from a ``tokenizer.model`` or from the one
+    packed inside a ``.nemo`` archive, without loading the model (CPU, seconds).
+    For standalone label checks such as perso/renormalize_manifests.py."""
+    import tarfile
+    import tempfile
+
+    from nemo.collections.common.tokenizers.sentencepiece_tokenizer import SentencePieceTokenizer
+
+    if not path.endswith(".nemo"):
+        return SentencePieceTokenizer(model_path=path)
+    with tarfile.open(path) as tf:
+        members = [m for m in tf.getmembers() if m.name.endswith("tokenizer.model")]
+        if len(members) != 1:
+            raise ValueError(f"{path}: expected one *tokenizer.model member, found {[m.name for m in members]}")
+        with tempfile.TemporaryDirectory() as tmp:
+            tf.extract(members[0], tmp)
+            return SentencePieceTokenizer(model_path=os.path.join(tmp, members[0].name))
 
 
 def _scan_manifest(path: str, tokenizer, unk: int, char_is_oov: Dict[str, bool]) -> _ManifestReport:
@@ -76,13 +108,11 @@ def _scan_manifest(path: str, tokenizer, unk: int, char_is_oov: Dict[str, bool])
             row = json.loads(line)
             text = row.get("text", row.get("normalized_text")) or ""
             report.n_labels += 1
-            chars = set(text)
-            for ch in chars - char_is_oov.keys():
-                char_is_oov[ch] = unk in tokenizer.text_to_ids(ch)
-            if not any(char_is_oov[ch] for ch in chars) or unk not in tokenizer.text_to_ids(text):
+            bad = label_oov_chars(text, tokenizer, unk, char_is_oov)
+            if not bad:
                 continue
             report.n_bad_labels += 1
-            report.bad_chars.update(ch for ch in text if char_is_oov[ch])
+            report.bad_chars.update(bad)
             if len(report.examples) < _MAX_EXAMPLES:
                 report.examples.append(text)
     return report
@@ -125,7 +155,7 @@ def check_labels_in_vocab(tokenizer, cfg) -> None:
         return
 
     start = time.perf_counter()
-    unk = _unk_id(tokenizer)
+    unk = unk_id_of(tokenizer)
     manifests = []
     for key in ("train_ds", "validation_ds", "test_ds"):
         manifests.extend(collect_manifests(cfg.model.get(key, None)))

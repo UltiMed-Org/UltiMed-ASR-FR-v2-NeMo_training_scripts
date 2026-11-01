@@ -48,7 +48,6 @@ import csv
 import json
 import os
 import random
-import re
 import subprocess
 import sys
 import tarfile
@@ -57,60 +56,13 @@ from pathlib import Path
 
 import soundfile as sf
 
+from label_charset import has_french_number_word, normalize_label_charset
+
 MIN_S, MAX_S = 1.0, 38.0
 
 
 def log(msg: str) -> None:
     print(msg, flush=True)
-
-
-# Typographic characters absent from the parakeet tokenizer vocab: a label carrying
-# one tokenizes to <unk>, and the model learns to emit it ("quelle qu ⁇ en soit").
-# Mirrors the folds of the dataset repo (UltiMed-ASR-FR-v1-scripts,
-# utils/_pipeline_shared.py: _TOKENIZABLE_FOLDS and DEFINITION_SUBSTITUTIONS),
-# which cannot be imported across repos. Dashes become "-" here rather than the
-# dataset repo's ", ": CV sentences are not re-prompted, so the fold stays literal.
-_LABEL_CHARSET_FOLDS = str.maketrans({
-    "’": "'", "‘": "'",  # curly single quotes -> apostrophe
-    "“": None, "”": None, "„": None,  # curly double quotes
-    "«": None, "»": None,  # guillemets
-    "–": "-", "—": "-",  # en / em dash
-    "‐": "-", "‑": "-", "−": "-",  # hyphen, nb hyphen, minus
-    "\u2026": "...",  # ellipsis
-})
-# A dropped closing quote must not leave its space before "." or ","
-# (French "dit « anthrax »." would become "dit anthrax ."); ":;!?" keep theirs,
-# the French CV convention.
-_QUOTE_BEFORE_PUNCT_RE = re.compile("\\s*[\u201c\u201d\u201e\u00ab\u00bb]+\\s*(?=[.,])")
-
-
-def normalize_label_charset(text: str) -> str:
-    """Fold the typographic characters the tokenizer lacks, then collapse
-    whitespace (unicode spaces included, so the nbsp inside French guillemets
-    goes too). Every other character, accents and ß included, is untouched."""
-    text = _QUOTE_BEFORE_PUNCT_RE.sub("", text)
-    return " ".join(text.translate(_LABEL_CHARSET_FOLDS).split())
-
-
-def renormalize_manifest(path: Path) -> tuple[int, int]:
-    """Rewrite the "text" field of a NeMo jsonl manifest in place, atomically
-    (temp file next to it, then rename). Unchanged lines are kept byte for byte and
-    a changed line keeps its \\u-escaping style, so a tracked manifest diffs only
-    where a label changed. Returns (changed, total) line counts."""
-    tmp = path.with_name(path.name + ".renorm.part")
-    changed = total = 0
-    with open(path, encoding="utf-8") as src, open(tmp, "w", encoding="utf-8") as out:
-        for line in src:
-            total += 1
-            row = json.loads(line)
-            text = normalize_label_charset(row["text"])
-            if text != row["text"]:
-                changed += 1
-                row["text"] = text
-                line = json.dumps(row, ensure_ascii=line.isascii()) + "\n"
-            out.write(line)
-    os.replace(tmp, path)
-    return changed, total
 
 
 def load_candidates(cv_root: Path, lang: str):
@@ -250,7 +202,11 @@ def convert_all(mp3_dir: Path, flac_dir: Path, lang: str, jobs: int):
 
 
 def build_manifest(cv_root: Path, lang: str, selected, flac_dir: Path):
-    """Manifest rows only for clips whose FLAC exists and parses."""
+    """Manifest rows only for clips whose FLAC exists and parses. Labels get the
+    charset fold of label_charset; French labels spelling a number in words are
+    dropped (UltiMed writes quantities in digits). Run
+    perso/renormalize_manifests.py --drop-oov afterwards for what the fold
+    cannot fix (letters of other alphabets, & = + ...)."""
     manifest = cv_root / f"cv_{lang}_train.jsonl"
     rows = 0
     hours = 0.0
@@ -270,9 +226,13 @@ def build_manifest(cv_root: Path, lang: str, selected, flac_dir: Path):
             if not (MIN_S <= dur <= MAX_S):
                 dropped += 1
                 continue
+            text = normalize_label_charset(text)
+            if lang == "fr" and has_french_number_word(text):
+                dropped += 1
+                continue
             out.write(json.dumps(
                 {"audio_filepath": f"clips_16k/{lang}/{stem}.flac",
-                 "duration": round(dur, 3), "text": normalize_label_charset(text)},
+                 "duration": round(dur, 3), "text": text},
                 ensure_ascii=False) + "\n")
             rows += 1
             hours += dur
@@ -291,17 +251,7 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--jobs", type=int, default=4, help="parallel ffmpeg processes (keep low while a training run is live)")
     ap.add_argument("--keep-mp3", action="store_true", help="keep the extracted mp3s instead of deleting them at the end")
-    ap.add_argument(
-        "--renormalize-manifests", nargs="+", type=Path, metavar="MANIFEST",
-        help="only rewrite the text field of these existing manifests in place with "
-             "normalize_label_charset (no download, no audio conversion), then exit")
     args = ap.parse_args()
-
-    if args.renormalize_manifests:
-        for path in args.renormalize_manifests:
-            changed, total = renormalize_manifest(path)
-            log(f"{path}: {changed} of {total} lines changed")
-        return
 
     cv_root = Path(args.cv_root).resolve()
     targets = {}

@@ -71,3 +71,10 @@ def test_missing_manifest_raises(tmp_path, monkeypatch):
     monkeypatch.delenv(lvc.SKIP_ENV_VAR, raising=False)
     with pytest.raises(FileNotFoundError):
         lvc.check_labels_in_vocab(_TOK, _cfg([str(tmp_path / "nope.jsonl")], []))
+
+
+def test_label_oov_chars_returns_offending_chars_and_caches():
+    cache = {}
+    assert lvc.label_oov_chars("l'été", _TOK, _UNK, cache) == []
+    assert lvc.label_oov_chars("« a »", _TOK, _UNK, cache) == ["«", "»"]
+    assert cache["«"] and not cache["a"]
