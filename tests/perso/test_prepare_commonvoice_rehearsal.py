@@ -26,7 +26,8 @@ _OUT_OF_VOCAB = "’‘“”„«»–\u2014…‐‑−\"()[];•­  ½¾²
 
 def test_prepare_uses_the_shared_fold():
     assert prep.normalize_label_charset is lc.normalize_label_charset
-    assert prep.has_french_number_word is lc.has_french_number_word
+    assert prep.NUMBER_WORD_FILTERS is renorm.NUMBER_WORD_FILTERS
+    assert prep.NUMBER_WORD_CONVERTERS is renorm.NUMBER_WORD_CONVERTERS
 
 
 def test_normalize_label_charset_folds_out_of_vocab_typography():

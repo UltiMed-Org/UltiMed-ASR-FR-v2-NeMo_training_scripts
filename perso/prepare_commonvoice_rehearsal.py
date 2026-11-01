@@ -35,6 +35,17 @@ Pipeline (idempotent, safe to re-run after a crash: existing FLACs are kept):
      manifest durations, so they must reflect the real file, and a FLAC whose
      header cannot be read is dropped here rather than crashing training.
 
+French labels are then rewritten with the dataset repo's UltiMed label rules
+(perso/ultimed_scripts.py, the repo found via $ULTIMED_SCRIPTS_DIR, default
+../UltiMed-ASR-FR-v1-scripts): compound number words to digits ("vingt et un"
+-> "21", "mille neuf cent quatre-vingt-dix" -> "1990"), "95 %", titles,
+dates, so rehearsal agrees with how UltiMed writes them. A lone number word
+("deux", "cent") and an ordinal ("vingt-et-unième") stay spelled, as in
+UltiMed labels. Until 2026-11-01 such labels were dropped instead (11,189
+lines of the 1.x manifest), which --drop-number-words still does.
+--manifest-only --manifest-suffix .converted rebuilds just the manifest under
+a new name, leaving the FLACs and the live manifest alone.
+
 Languages and per-language hour targets come from --langs as CV locale codes
 (e.g. "de:20,it:20,sv-SE:99,fi:99"); a target above the on-disk pool takes the
 whole pool, which is how the small locales are used in full. 1.4.0 used the
@@ -56,7 +67,8 @@ from pathlib import Path
 
 import soundfile as sf
 
-from label_charset import has_french_number_word, normalize_label_charset
+from label_charset import normalize_label_charset
+from renormalize_manifests import NUMBER_WORD_CONVERTERS, NUMBER_WORD_FILTERS
 
 MIN_S, MAX_S = 1.0, 38.0
 
@@ -201,16 +213,22 @@ def convert_all(mp3_dir: Path, flac_dir: Path, lang: str, jobs: int):
     return failed
 
 
-def build_manifest(cv_root: Path, lang: str, selected, flac_dir: Path):
+def build_manifest(cv_root: Path, lang: str, selected, flac_dir: Path,
+                   drop_number_words: bool = False, suffix: str = ""):
     """Manifest rows only for clips whose FLAC exists and parses. Labels get the
-    charset fold of label_charset; French labels spelling a number in words are
-    dropped (UltiMed writes quantities in digits). Run
+    charset fold of label_charset, then for a language with a number rewrite
+    (fr) the UltiMed label rules (numbers in digits, see
+    renormalize_manifests.NUMBER_WORD_CONVERTERS), or with drop_number_words
+    the labels spelling a number are dropped instead. Run
     perso/renormalize_manifests.py --drop-oov afterwards for what the fold
     cannot fix (letters of other alphabets, & = + ...)."""
-    manifest = cv_root / f"cv_{lang}_train.jsonl"
+    manifest = cv_root / f"cv_{lang}_train{suffix}.jsonl"
+    drop_if = NUMBER_WORD_FILTERS.get(lang) if drop_number_words else None
+    convert = None if drop_number_words or lang not in NUMBER_WORD_CONVERTERS else NUMBER_WORD_CONVERTERS[lang]()
     rows = 0
     hours = 0.0
     dropped = 0
+    converted = 0
     with open(manifest, "w", encoding="utf-8") as out:
         for name, (_, text) in selected.items():
             stem = os.path.splitext(name)[0]
@@ -227,16 +245,19 @@ def build_manifest(cv_root: Path, lang: str, selected, flac_dir: Path):
                 dropped += 1
                 continue
             text = normalize_label_charset(text)
-            if lang == "fr" and has_french_number_word(text):
+            if drop_if is not None and drop_if(text):
                 dropped += 1
                 continue
+            if convert is not None:
+                folded, text = text, convert(text)
+                converted += text != folded
             out.write(json.dumps(
                 {"audio_filepath": f"clips_16k/{lang}/{stem}.flac",
                  "duration": round(dur, 3), "text": text},
                 ensure_ascii=False) + "\n")
             rows += 1
             hours += dur
-    log(f"[{lang}] manifest {manifest.name}: {rows} clips / {hours / 3600:.1f} h ({dropped} selected clips dropped)")
+    log(f"[{lang}] manifest {manifest.name}: {rows} clips / {hours / 3600:.1f} h ({dropped} selected clips dropped, {converted} labels rewritten)")
     return rows, hours
 
 
@@ -251,6 +272,15 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--jobs", type=int, default=4, help="parallel ffmpeg processes (keep low while a training run is live)")
     ap.add_argument("--keep-mp3", action="store_true", help="keep the extracted mp3s instead of deleting them at the end")
+    ap.add_argument("--drop-number-words", action="store_true",
+                    help="drop the labels spelling a number (fr) instead of rewriting them to digits "
+                         "with the dataset repo's UltiMed rules (found via $ULTIMED_SCRIPTS_DIR)")
+    ap.add_argument("--manifest-suffix", default="",
+                    help="write cv_<lang>_train<SUFFIX>.jsonl, e.g. '.converted' to leave the live "
+                         "manifest a running training reads untouched")
+    ap.add_argument("--manifest-only", action="store_true",
+                    help="skip tar extraction and ffmpeg (FLACs already built): only rewrite the manifest; "
+                         "a selected clip without its FLAC is dropped as usual")
     args = ap.parse_args()
 
     cv_root = Path(args.cv_root).resolve()
@@ -279,14 +309,16 @@ def main():
 
         mp3_dir = cv_root / "extracted_mp3" / lang
         flac_dir = cv_root / "clips_16k" / lang
-        mp3_dir.mkdir(parents=True, exist_ok=True)
-        flac_dir.mkdir(parents=True, exist_ok=True)
-        seen, extracted = extract_selected(cv_root, lang, set(selected), mp3_dir, flac_dir)
-        log(f"[{lang}] extracted {extracted} new mp3s")
-        convert_all(mp3_dir, flac_dir, lang, args.jobs)
-        summary[lang] = build_manifest(cv_root, lang, selected, flac_dir)
+        if not args.manifest_only:
+            mp3_dir.mkdir(parents=True, exist_ok=True)
+            flac_dir.mkdir(parents=True, exist_ok=True)
+            seen, extracted = extract_selected(cv_root, lang, set(selected), mp3_dir, flac_dir)
+            log(f"[{lang}] extracted {extracted} new mp3s")
+            convert_all(mp3_dir, flac_dir, lang, args.jobs)
+        summary[lang] = build_manifest(cv_root, lang, selected, flac_dir,
+                                       args.drop_number_words, args.manifest_suffix)
 
-        if not args.keep_mp3:
+        if not args.keep_mp3 and not args.manifest_only:
             for p in mp3_dir.glob("*"):
                 p.unlink()
             log(f"[{lang}] cleaned extracted mp3s")

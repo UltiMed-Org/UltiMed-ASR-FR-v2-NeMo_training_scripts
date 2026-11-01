@@ -2,13 +2,22 @@
 
 Per file, atomically (temp file next to it, then rename):
   1. the "text" field goes through label_charset.normalize_label_charset;
+     with --convert-number-words fr it then goes through the dataset repo's
+     UltiMed label rules (ultimed_scripts.ultimed_label_normalizer, the repo
+     found via $ULTIMED_SCRIPTS_DIR, default ../UltiMed-ASR-FR-v1-scripts):
+     compound number words to digits ("vingt et un" -> "21", "mille neuf cent
+     quatre-vingt-dix" -> "1990", "trois virgule cinq" -> "3,5"), "95 %",
+     titles, dates, clock times. A lone number word ("deux", "cent") and an
+     ordinal ("vingt-et-unième") stay spelled, as in UltiMed labels;
   2. each label is checked against the real tokenizer with the training
      guard's per-character cache (label_vocab_check.label_oov_chars), so a
      manifest that passes here passes the startup check of the finetune script;
   3. --drop-oov removes the lines still carrying an <unk> character (printed
      with their offending characters), otherwise they are only reported;
-  4. --drop-number-words fr also removes lines whose text spells a French
-     number other than un/une (label_charset.has_french_number_word).
+  4. --drop-number-words fr (exclusive with --convert-number-words) instead
+     removes lines whose text spells a French number other than un/une
+     (label_charset.has_french_number_word). That is how the 1.x CV-fr
+     manifest lost 11,189 lines on 2026-11-01; converting replaced it.
 
 Unchanged lines are kept byte for byte and a changed line keeps its
 \\u-escaping style, so a tracked manifest diffs only where a label changed.
@@ -27,8 +36,11 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from label_charset import has_french_number_word, normalize_label_charset
+from ultimed_scripts import ultimed_label_normalizer
 
 NUMBER_WORD_FILTERS: Dict[str, Callable[[str], bool]] = {"fr": has_french_number_word}
+# Language -> factory of the label rewrite that writes its numbers in digits.
+NUMBER_WORD_CONVERTERS: Dict[str, Callable[[], Callable[[str], str]]] = {"fr": ultimed_label_normalizer}
 
 
 @dataclass
@@ -39,6 +51,8 @@ class RenormReport:
     oov: List[Tuple[str, str]] = field(default_factory=list)
     oov_dropped: bool = False
     number_word_dropped: List[str] = field(default_factory=list)
+    # (before, after) of lines the ``convert`` rewrite changed, before = after the charset fold
+    converted: List[Tuple[str, str]] = field(default_factory=list)
 
 
 def renormalize_manifest(
@@ -46,10 +60,13 @@ def renormalize_manifest(
     oov_chars: Optional[Callable[[str], List[str]]] = None,
     drop_oov: bool = False,
     drop_if: Optional[Callable[[str], bool]] = None,
+    convert: Optional[Callable[[str], str]] = None,
 ) -> RenormReport:
-    """Rewrite ``path`` in place. ``oov_chars(text)`` returns the characters
-    that make ``text`` tokenize to <unk> (``[]`` when clean); ``drop_if(text)``
-    drops a line on top of that. Counts are over the input lines."""
+    """Rewrite ``path`` in place. ``convert(text)`` rewrites the folded label
+    (e.g. the UltiMed number rules), before the checks; ``oov_chars(text)``
+    returns the characters that make ``text`` tokenize to <unk> (``[]`` when
+    clean); ``drop_if(text)`` drops a line on top of that. Counts are over the
+    input lines."""
     report = RenormReport(oov_dropped=drop_oov)
     tmp = path.with_name(path.name + ".renorm.part")
     with open(path, encoding="utf-8") as src, open(tmp, "w", encoding="utf-8") as out:
@@ -60,6 +77,10 @@ def renormalize_manifest(
             report.total += 1
             row = json.loads(line)
             text = normalize_label_charset(row["text"])
+            if convert is not None:
+                folded, text = text, convert(text)
+                if text != folded:
+                    report.converted.append((folded, text))
             if text != row["text"]:
                 report.changed += 1
                 row["text"] = text
@@ -85,8 +106,12 @@ def main():
     ap.add_argument("--drop-oov", action="store_true",
                     help="remove lines still containing a character the tokenizer maps to <unk> "
                          "(default: only report them)")
-    ap.add_argument("--drop-number-words", choices=sorted(NUMBER_WORD_FILTERS), default=None,
-                    help="also remove lines spelling a number in words in this language")
+    numbers = ap.add_mutually_exclusive_group()
+    numbers.add_argument("--convert-number-words", choices=sorted(NUMBER_WORD_CONVERTERS), default=None,
+                         help="rewrite labels with the UltiMed label rules of the dataset repo "
+                              "(numbers in digits, 95 %%, ...; found via $ULTIMED_SCRIPTS_DIR)")
+    numbers.add_argument("--drop-number-words", choices=sorted(NUMBER_WORD_FILTERS), default=None,
+                         help="instead remove lines spelling a number in words in this language")
     ap.add_argument("--quiet-drops", action="store_true", help="print dropped labels as a count only")
     args = ap.parse_args()
 
@@ -97,13 +122,14 @@ def main():
     unk = unk_id_of(tokenizer)
     cache: Dict[str, bool] = {}
     drop_if = NUMBER_WORD_FILTERS[args.drop_number_words] if args.drop_number_words else None
+    convert = NUMBER_WORD_CONVERTERS[args.convert_number_words]() if args.convert_number_words else None
 
     n_oov_left = 0
     for path in args.files:
-        r = renormalize_manifest(path, lambda t: label_oov_chars(t, tokenizer, unk, cache), args.drop_oov, drop_if)
+        r = renormalize_manifest(path, lambda t: label_oov_chars(t, tokenizer, unk, cache), args.drop_oov, drop_if, convert)
         verb = "dropped" if r.oov_dropped else "KEPT (still <unk>)"
         print(f"{path}: {r.total} lines, {r.changed} changed, {len(r.oov)} <unk> {verb}, "
-              f"{len(r.number_word_dropped)} number-word dropped", flush=True)
+              f"{len(r.converted)} converted, {len(r.number_word_dropped)} number-word dropped", flush=True)
         if not r.oov_dropped:
             n_oov_left += len(r.oov)
         if not args.quiet_drops:
@@ -111,6 +137,8 @@ def main():
                 print(f"  <unk> {' '.join(f'U+{ord(c):04X}{c!r}' for c in chars)}: {text!r}")
             for text in r.number_word_dropped:
                 print(f"  number word: {text!r}")
+            for before, after in r.converted:
+                print(f"  converted: {before!r} -> {after!r}")
     if n_oov_left:
         raise SystemExit(f"{n_oov_left} label(s) still tokenize to <unk>; rerun with --drop-oov to remove them")
 
