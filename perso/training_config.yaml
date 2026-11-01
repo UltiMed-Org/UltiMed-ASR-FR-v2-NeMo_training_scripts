@@ -33,7 +33,8 @@
 #   drugs (2.5%), acronyms (0.1%). PARROT subset is CC BY-NC-SA,
 #   EVAL-ONLY: never in train, used as out-of-domain radiology monitor.
 #
-#   Validation: fleurs (de en fr fi it sv) + diy + drug_sentence + oli +
+#   Validation: fleurs fr (de/en/fi/it/sv dropped 2026-11-01, French-only mix)
+#   + diy + drug_sentence + oli +
 #   united_syn_med + seeded UltiMed slices (built by
 #   perso/build_ultimed_val_slices.py, ~8 h total).
 #
@@ -479,37 +480,28 @@ model:
       # the fine-tuned weights). Still evaluated in val/test.
       # - "./perso/downloaded_datasets_ignore-backups/united_syn_med/train/train.unparenthesized.uncapitalized.kept.down-8k.wo_commas.json"
       # FLEURS train splits: NOT used. fleurs is the external forgetting
-      # canary (fr+en are in the monitored macro), so training on it would
+      # canary (fr is in the monitored macro; en was too until 2026-11-01), so training on it would
       # blind the one probe that is clean. The local splits are also tiny
       # (~2.3 h/language), too small to rehearse with anyway.
       # - "./perso/downloaded_datasets_ignore-backups/fleurs/en/train.altered.json"
       # - "./perso/downloaded_datasets_ignore-backups/fleurs/fr/train.altered.json"
-      # Common Voice 22.0 rehearsal (new in 1.4.0): 139,437 clips / 200.0 h fr
-      # + 61,164 clips / 100.0 h en, sampled (seed 42) and converted to 16 kHz
-      # mono FLAC by perso/prepare_commonvoice_rehearsal.py. Sentences are the
-      # original cased+punctuated CV text, so the style matches the model's
-      # output convention. CV (MCV v7.0) is part of parakeet v3's pretraining
-      # set, making this replay-style rehearsal against the forgetting every
-      # earlier run showed on fleurs-EN and the unmonitored languages
-      # (1.3.0: sv +2.9, fi +4.0 vs baseline). ~11% of audio-seconds, 2:1
-      # fr:en to favour the deployment language without abandoning English.
-      # CC0-1.0, so the planned permissive release stays clean. Reached via
-      # the gitignored symlink perso/downloaded_datasets_ignore-backups/
-      # commonvoice -> the dataset drive; audio paths are relative to the
-      # manifest like the UltiMed set above.
+      # Common Voice 22.0 French rehearsal: CV fr (139,437 clips / 200.0 h,
+      # sampled seed 42, 16 kHz mono FLAC, by
+      # perso/prepare_commonvoice_rehearsal.py), original cased+punctuated
+      # text so the style matches the output convention. CV (MCV v7.0) is in
+      # parakeet v3's pretraining set, so this is replay against general-French
+      # forgetting (the guard for fleurs_fr). CC0-1.0, so the planned
+      # permissive release stays clean. Reached via the gitignored symlink
+      # perso/downloaded_datasets_ignore-backups/commonvoice -> the dataset
+      # drive; audio paths are relative to the manifest.
+      # History: 1.4.0 added CV fr + en (100 h, 2:1 fr:en) after every earlier
+      # run forgot on fleurs-EN and the unmonitored languages; 1.5.0 added de,
+      # it (20 h each), sv-SE (9.1 h) and fi (2.6 h) once fr/en replay had
+      # erased forgetting at zero in-domain cost. 2026-11-01: en/de/it/sv-SE/fi
+      # DROPPED, the mix is French only: the deployment is French medical
+      # dictation and the model sometimes fell back into English on French
+      # audio, so rehearsing other languages was working against it.
       - "./perso/downloaded_datasets_ignore-backups/commonvoice/cv_fr_train.jsonl"
-      - "./perso/downloaded_datasets_ignore-backups/commonvoice/cv_en_train.jsonl"
-      # 1.5.0: the four remaining monitored languages get the same treatment,
-      # after 1.4.0 proved fr/en replay erases forgetting at zero in-domain
-      # cost while unprotected sv (+2.2 within-run) and fi (+3.8) kept
-      # sliding. de/it at 20 h each; sv-SE and fi are their entire CV train
-      # pools (9.1 h / 2.6 h), which is why they are smaller. FLEURS itself
-      # stays strictly out of training so its val sets remain out-of-corpus
-      # probes for every language.
-      - "./perso/downloaded_datasets_ignore-backups/commonvoice/cv_de_train.jsonl"
-      - "./perso/downloaded_datasets_ignore-backups/commonvoice/cv_it_train.jsonl"
-      - "./perso/downloaded_datasets_ignore-backups/commonvoice/cv_sv-SE_train.jsonl"
-      - "./perso/downloaded_datasets_ignore-backups/commonvoice/cv_fi_train.jsonl"
     sample_rate: 16000
 
     # Standard (non-cached) mode: the full encoder runs on GPU each step.
@@ -960,26 +952,6 @@ model:
         prefetch_factor: 2
       # --------------------------------------------------------------------
 
-      - name: fleurs_de
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/de/validation.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
-
-      - name: fleurs_en
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/en/validation.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
-
       - name: fleurs_fr
         manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fr/validation.altered.json"
         sample_rate: 16000
@@ -990,40 +962,13 @@ model:
         pin_memory: true
         prefetch_factor: 2
 
-      - name: fleurs_fi
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fi/validation.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
-
-      - name: fleurs_it
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/it/validation.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
-
-      - name: fleurs_sv
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/sv/validation.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
-
-      # Eval-only since the UltiMed run (CC BY-SA, excluded from training);
-      # kept here to watch for regression on English medical speech.
+      # Eval-only since the UltiMed run (CC BY-SA, excluded from training).
+      # Since 2026-11-01 an English medical generalization probe: does the
+      # French-only model still transcribe English medical speech? NOT in any
+      # macro. Shrunk to a 300-row seeded (seed 42) subset of down-2k, made with
+      # read_rows/write_slice from perso/build_ultimed_val_slices.py.
       - name: united_syn_med
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/united_syn_med/validation/val.kept.unparenthesized.down-2k.json"
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/united_syn_med/validation/val.kept.unparenthesized.down-300.json"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
@@ -1102,56 +1047,9 @@ model:
         pin_memory: true
         prefetch_factor: 4
 
-      - name: fleurs_bg
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/bg/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_cs
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/cs/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_da
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/da/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_de
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/de/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_el
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/el/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
+      # FLEURS test: only fr and en since 2026-11-01 (the other 23 languages
+      # dropped with the French-only mix). en stays as a manual generalization
+      # probe; test is run by hand.
       - name: fleurs_en
         manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/en/test.altered.json"
         sample_rate: 16000
@@ -1162,188 +1060,8 @@ model:
         pin_memory: true
         prefetch_factor: 4
 
-      - name: fleurs_es
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/es/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_et
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/et/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_fi
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fi/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
       - name: fleurs_fr
         manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fr/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_hr
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/hr/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_hu
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/hu/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_it
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/it/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_lt
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/lt/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_lv
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/lv/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_mt
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/mt/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_nl
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/nl/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_pl
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/pl/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_pt
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/pt/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_ro
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/ro/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_ru
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/ru/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_sk
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/sk/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_sl
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/sl/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_sv
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/sv/test.altered.json"
-        sample_rate: 16000
-        batch_size: 6
-        shuffle: false
-        num_workers: 4
-        persistent_workers: true
-        pin_memory: true
-        prefetch_factor: 4
-
-      - name: fleurs_uk
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/uk/test.altered.json"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
@@ -1706,14 +1424,24 @@ normalised_wer: true
 # examples/asr/speech_to_text_finetune_cached.py, which writes the result
 # into trainer.callback_metrics so it can serve as the checkpoint monitor.
 macro_metrics:
-  # Checkpoint monitor for the UltiMed run: equal-weight macro of the two
-  # FLEURS anchors (multilinguality / forgetting guard), the three main
-  # in-domain UltiMed slices, and oli (see below). A gain on medical French
-  # only counts if it does not cost general FR/EN. acronyms (tiny, noisy) and
-  # parrot (out-of-domain, never trained) are tracked but kept out of the
-  # monitor, and so are the nine per-voice sets: they resample the same val
-  # split as the per-source slices, so putting them here would weigh the same
-  # audio twice over.
+  # Checkpoint monitor: equal-weight macro of 5 sets, ALL FRENCH: FLEURS fr
+  # (general-French forgetting guard), the three main in-domain UltiMed
+  # slices, and oli (see below). A gain on medical French only counts if it
+  # does not cost general French. acronyms (tiny, noisy) and parrot
+  # (out-of-domain, never trained) are tracked but kept out of the monitor,
+  # and so are the nine per-voice sets: they resample the same val split as
+  # the per-source slices, so putting them here would weigh the same audio
+  # twice over. united_syn_med (English medical) is an eval-only
+  # generalization probe, never in a macro.
+  #
+  # History: until 2026-11-01 this was 6 sets with fleurs_en, plus two
+  # observability macros, fleurs_fr_en_macro_val_wer (fr+en) and
+  # fleurs_all6_macro_val_wer (fr/en/de/it/sv/fi, added in 1.6.0). All dropped
+  # 2026-11-01 when the mix went French only (deployment is French medical
+  # dictation and the model drifted into English on French audio); their
+  # source sets are gone, and config_audit refuses a macro whose source
+  # matches no validation set. So combined_macro values before and after
+  # that date are not comparable.
   #
   # oli_drug_sentence carries weight here despite being the smallest set,
   # because it is the ONLY real recorded human speech in the whole setup that
@@ -1724,35 +1452,16 @@ macro_metrics:
   # without it is chosen on TTS performance alone.
   #
   # Caveat to read it with: 205 clips / 30 min is a small sample, so its WER
-  # is the noisiest component of the macro. It is one of six voices here
+  # is the noisiest component of the macro. It is one of five voices here
   # rather than the monitor on its own for exactly that reason, and
   # save_top_k: 5 leaves room to compare the finalists on oli directly.
   - name: "combined_macro_val_wer"
     sources:
       - "fleurs_frval_wer"
-      - "fleurs_enval_wer"
       - "ultimed_dictionaryval_wer"
       - "ultimed_parhafval_wer"
       - "ultimed_drugsval_wer"
       - "oli_drug_sentenceval_wer"
-  # Kept for comparability with previous runs' tensorboards.
-  - name: "fleurs_fr_en_macro_val_wer"
-    sources: ["fleurs_frval_wer", "fleurs_enval_wer"]
-  # Forgetting across ALL six FLEURS languages (added in 1.6.0). fr/en are
-  # rehearsed with Common Voice and sit in the monitor above, but 1.4.0 and
-  # 1.5.0 showed the unrehearsed-or-lightly-rehearsed languages move on their
-  # own (sv 20.2 -> 22.4, fi 19.3 -> 23.1 in 1.4.0), and six separate curves
-  # were easy to miss. Observability only, NOT the checkpoint monitor:
-  # sv/fi/de/it are not deployment languages, and weighting them into
-  # combined_macro would let a checkpoint win on Finnish.
-  - name: "fleurs_all6_macro_val_wer"
-    sources:
-      - "fleurs_frval_wer"
-      - "fleurs_enval_wer"
-      - "fleurs_deval_wer"
-      - "fleurs_itval_wer"
-      - "fleurs_svval_wer"
-      - "fleurs_fival_wer"
 
 # Experiment manager - handles logging, checkpointing, etc.
 # documentation: https://github.com/NVIDIA-NeM./perso/nemo/blob/412ab81dd5b17f763ee3aa723c67679698649a7./perso/nemo/utils/exp_manager.py
@@ -1947,8 +1656,9 @@ exp_manager:
     # NeMo names the WER metric "val_wer" and prefixes the per-dataset
     # variants: diyval_wer, drug_sentenceval_wer, etc. The normalised twins add
     # a _norm suffix (see normalised_wer below) and are logged, not monitored.
-    # Monitor the combined macro (see macro_metrics above): FLEURS FR+EN
-    # anchors + the three main UltiMed slices. A French-only or in-domain-only
+    # Monitor the combined macro (see macro_metrics above): 5 French sets,
+    # FLEURS fr + the three main UltiMed slices + oli (FLEURS en dropped
+    # 2026-11-01, French-only mix; the paragraph below predates that). A French-only or in-domain-only
     # monitor is blind to language tipping: training data is ~99% French TTS,
     # so the model could drift its language prior toward French and look
     # great in-domain while regressing elsewhere. (Same failure mode hit
