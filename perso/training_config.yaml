@@ -501,7 +501,12 @@ model:
       # DROPPED, the mix is French only: the deployment is French medical
       # dictation and the model sometimes fell back into English on French
       # audio, so rehearsing other languages was working against it.
-      - "./perso/downloaded_datasets_ignore-backups/commonvoice/cv_fr_train.jsonl"
+      # 2026-11-01 (2.2.1+): the `.converted` manifest, 138,999 rows instead
+      # of 127,809: French number words are converted to digits with the
+      # UltiMed label rules (perso/ultimed_scripts.py) instead of dropping
+      # every clip that spelled a number, so CV labels agree with the
+      # in-domain labels on "21 ans", "64 %", "1932".
+      - "./perso/downloaded_datasets_ignore-backups/commonvoice/cv_fr_train.converted.jsonl"
     sample_rate: 16000
 
     # Standard (non-cached) mode: the full encoder runs on GPU each step.
