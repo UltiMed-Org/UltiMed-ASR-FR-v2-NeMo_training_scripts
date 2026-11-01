@@ -86,6 +86,7 @@ from nemo.collections.asr.parts.utils.asr_batching import (
     rnnt_batch_cost,
 )
 from nemo.collections.asr.parts.utils.data_leak_check import check_data_leaks, collect_manifests
+from nemo.collections.asr.parts.utils.label_vocab_check import check_labels_in_vocab
 from nemo.collections.asr.modules.rnnt import FUSED_CELLS_CAP_DEFAULT, FUSED_CELLS_SAFETY_DEFAULT
 from nemo.collections.asr.parts.utils.config_audit import (
     assert_all_consumed,
@@ -1360,6 +1361,12 @@ def _build(cfg):
 
     # Check vocabulary type and update if needed
     asr_model = check_vocabulary(asr_model, cfg)
+
+    # Every train/val/test label must tokenize without <unk>: scans all of
+    # them, lists every offending character, then raises. Placed after
+    # check_vocabulary (which may swap the tokenizer) and before any
+    # dataloader. See nemo/collections/asr/parts/utils/label_vocab_check.py.
+    check_labels_in_vocab(asr_model.tokenizer, cfg)
 
     # --- Joint fused loss/WER sub-batch size ---
     # The RNNT/TDT joint materialises a [B, T, U, V] lattice (V = 8198 for
