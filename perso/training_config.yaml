@@ -778,7 +778,8 @@ model:
       # exp_manager.checkpoint_callback_params, or substitute your own
       # real-speech manifest. See README.md.
       - name: oli_drug_sentence
-        manifest_filepath: "./perso/oli_spoken_dataset/nemo_manifest_ordered_uncapitaliazedDCI.json"
+        # 2026-11-01: number-converted references (the model writes digits, the originals spell numbers, so WER measured formatting); original manifest kept beside it.
+        manifest_filepath: "./perso/oli_spoken_dataset/nemo_manifest_ordered_uncapitaliazedDCI.converted.json"
         sample_rate: 16000
         batch_size: 6  # fallback only (cost_batching above sizes the real batch)
         shuffle: false  # Never shuffle validation
@@ -992,7 +993,8 @@ model:
         prefetch_factor: 2
 
       - name: fleurs_fr
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fr/validation.altered.json"
+        # 2026-11-01: number-converted references (the model writes digits, the originals spell numbers, so WER measured formatting); original manifest kept beside it.
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fr/validation.altered.converted.json"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
@@ -1107,7 +1109,8 @@ model:
       # exp_manager.checkpoint_callback_params, or substitute your own
       # real-speech manifest. See README.md.
       - name: oli_drug_sentence
-        manifest_filepath: "./perso/oli_spoken_dataset/nemo_manifest_ordered_uncapitaliazedDCI.json"
+        # 2026-11-01: number-converted references (the model writes digits, the originals spell numbers, so WER measured formatting); original manifest kept beside it.
+        manifest_filepath: "./perso/oli_spoken_dataset/nemo_manifest_ordered_uncapitaliazedDCI.converted.json"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
@@ -1130,7 +1133,8 @@ model:
         prefetch_factor: 4
 
       - name: fleurs_fr
-        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fr/test.altered.json"
+        # 2026-11-01: number-converted references (the model writes digits, the originals spell numbers, so WER measured formatting); original manifest kept beside it.
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fr/test.altered.converted.json"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
