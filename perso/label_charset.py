@@ -12,7 +12,9 @@ Two concerns live here:
 - has_french_number_word: UltiMed labels write quantities in digits while
   Common Voice French writes them in words (27% of its sentences), which
   taught the model "vingt-cinq milligrammes". French rehearsal labels with a
-  number word are dropped.
+  number word were dropped until 2026-11-01; they are now rewritten to digits
+  by the dataset repo's rules (perso/ultimed_scripts.py) and this test only
+  serves the opt-in --drop-number-words of the two manifest scripts.
 
 Written with Claude Code.
 """

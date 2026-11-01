@@ -141,3 +141,99 @@ def test_renormalize_manifest_drops_french_number_words(tmp_path):
     r = renorm.renormalize_manifest(path, drop_if=renorm.NUMBER_WORD_FILTERS["fr"])
     assert r.number_word_dropped == ["vingt comprimés", "deux cent quatre-vingt-dix"]
     assert _texts(path) == ["un comprimé", "25 mg"]
+
+
+# --- UltiMed number rules, imported from the sibling dataset repo -------------------
+
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+import soundfile as sf  # noqa: E402
+
+import ultimed_scripts  # noqa: E402
+
+try:
+    ultimed_scripts.scripts_dir()
+    _NO_SCRIPTS = None
+except ultimed_scripts.UltimedScriptsNotFound as e:
+    _NO_SCRIPTS = str(e)
+needs_scripts = pytest.mark.skipif(_NO_SCRIPTS is not None, reason=f"dataset repo absent: {_NO_SCRIPTS}")
+
+# (CV-style label after the charset fold, label after the UltiMed rules)
+_CONVERSIONS = [
+    ("Il est né en mille neuf cent quatre-vingt-dix.", "Il est né en 1990."),
+    ("Il y avait vingt et un élèves.", "Il y avait 21 élèves."),
+    ("Elle a quatre-vingt-dix-neuf pour cent de chances.", "Elle a 99 % de chances."),
+    ("Ballon de trois virgule cinq.", "Ballon de 3,5."),
+]
+# Left spelled by the UltiMed rules: ordinals, a lone number word, "un" as an article.
+_UNTOUCHED = [
+    "C'est le vingt-et-unième siècle.",
+    "Deux.",
+    "Un homme est venu.",
+    "Des milliers de personnes.",
+]
+
+
+@needs_scripts
+def test_ultimed_label_normalizer_converts_numbers_and_keeps_ordinals():
+    convert = ultimed_scripts.ultimed_label_normalizer()
+    for before, after in _CONVERSIONS:
+        assert convert(before) == after
+    for text in _UNTOUCHED:
+        assert convert(text) == text
+
+
+def test_scripts_dir_fails_clearly_on_a_missing_path(tmp_path, monkeypatch):
+    monkeypatch.setenv(ultimed_scripts.ENV_VAR, str(tmp_path / "nope"))
+    with pytest.raises(ultimed_scripts.UltimedScriptsNotFound, match="ULTIMED_SCRIPTS_DIR"):
+        ultimed_scripts.ultimed_label_normalizer()
+
+
+def test_scripts_dir_fails_clearly_on_a_wrong_checkout(tmp_path, monkeypatch):
+    monkeypatch.setenv(ultimed_scripts.ENV_VAR, str(tmp_path))
+    with pytest.raises(ultimed_scripts.UltimedScriptsNotFound, match="05_normalize_text.py"):
+        ultimed_scripts.scripts_dir()
+
+
+def test_scripts_dir_default_is_the_sibling_checkout(monkeypatch):
+    monkeypatch.delenv(ultimed_scripts.ENV_VAR, raising=False)
+    assert ultimed_scripts.DEFAULT_DIR == _PERSO.parent.parent / "UltiMed-ASR-FR-v1-scripts"
+
+
+@needs_scripts
+def test_renormalize_manifest_converts_french_number_words(tmp_path):
+    path = tmp_path / "m.jsonl"
+    _write(path, [before for before, _ in _CONVERSIONS] + _UNTOUCHED)
+    convert = renorm.NUMBER_WORD_CONVERTERS["fr"]()
+    r = renorm.renormalize_manifest(path, convert=convert)
+    assert r.converted == _CONVERSIONS
+    assert r.number_word_dropped == []
+    assert _texts(path) == [after for _, after in _CONVERSIONS] + _UNTOUCHED
+
+
+def _flac_selection(flac_dir, texts):
+    flac_dir.mkdir(parents=True)
+    selected = {}
+    for i, text in enumerate(texts):
+        sf.write(str(flac_dir / f"c{i}.flac"), np.zeros(16000 * 2, dtype=np.int16), 16000)
+        selected[f"c{i}.mp3"] = (2.0, text)
+    return selected
+
+
+@needs_scripts
+def test_build_manifest_converts_french_labels(tmp_path):
+    texts = ["Il y avait vingt et un élèves.", "C'est le vingt-et-unième siècle.", "« Deux », dit-il."]
+    selected = _flac_selection(tmp_path / "clips_16k" / "fr", texts)
+    rows, _ = prep.build_manifest(tmp_path, "fr", selected, tmp_path / "clips_16k" / "fr", suffix=".converted")
+    assert rows == 3
+    assert not (tmp_path / "cv_fr_train.jsonl").exists()
+    assert _texts(tmp_path / "cv_fr_train.converted.jsonl") == [
+        "Il y avait 21 élèves.", "C'est le vingt-et-unième siècle.", "Deux, dit-il."]
+
+
+def test_build_manifest_can_still_drop_french_number_words(tmp_path):
+    texts = ["Il y avait vingt et un élèves.", "Un homme est venu."]
+    selected = _flac_selection(tmp_path / "clips_16k" / "fr", texts)
+    rows, _ = prep.build_manifest(tmp_path, "fr", selected, tmp_path / "clips_16k" / "fr", drop_number_words=True)
+    assert rows == 1
+    assert _texts(tmp_path / "cv_fr_train.jsonl") == ["Un homme est venu."]
