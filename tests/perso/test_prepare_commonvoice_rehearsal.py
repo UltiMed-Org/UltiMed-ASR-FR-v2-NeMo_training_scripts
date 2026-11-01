@@ -177,6 +177,10 @@ _CONVERSIONS = [
     ("Il y avait vingt et un élèves.", "Il y avait 21 élèves."),
     ("Elle a quatre-vingt-dix-neuf pour cent de chances.", "Elle a 99 % de chances."),
     ("Ballon de trois virgule cinq.", "Ballon de 3,5."),
+    # 2026-11-01: dosage forms take digits, and a lone "un" before a duration does in a
+    # quantity context.
+    ("Prendre un comprimé et deux gélules.", "Prendre 1 comprimé et 2 gélules."),
+    ("Il revient dans un an.", "Il revient dans 1 an."),
 ]
 # Left spelled by the UltiMed rules: ordinals, a lone number word, "un" as an article.
 _UNTOUCHED = [
@@ -184,6 +188,9 @@ _UNTOUCHED = [
     "Deux.",
     "Un homme est venu.",
     "Des milliers de personnes.",
+    # A lone "un" before a duration outside a quantity context (2026-11-01).
+    "Un an plus tard, il revint.",
+    "Et un jour, le fiancé partit.",
 ]
 
 
