@@ -22,6 +22,9 @@ Per file, atomically (temp file next to it, then rename):
 
 Unchanged lines are kept byte for byte and a changed line keeps its
 \\u-escaping style, so a tracked manifest diffs only where a label changed.
+With --output-suffix the result goes to a new file beside each input
+(``x.json`` -> ``x<suffix>.json``) and the input stays untouched, e.g. to keep
+both the original and the converted references of an evaluation set.
 
     python perso/renormalize_manifests.py perso/nemo_dataset/*.json \\
         --tokenizer-from ../parakeet-tdt-0.6b-v3-ultra-onnx/parakeet-tdt-0.6b-v3-ultra.nemo --drop-oov
@@ -62,14 +65,16 @@ def renormalize_manifest(
     drop_oov: bool = False,
     drop_if: Optional[Callable[[str], bool]] = None,
     convert: Optional[Callable[[str], str]] = None,
+    dest: Optional[Path] = None,
 ) -> RenormReport:
-    """Rewrite ``path`` in place. ``convert(text)`` rewrites the folded label
+    """Rewrite ``path`` in place, or into ``dest`` leaving ``path`` untouched. ``convert(text)`` rewrites the folded label
     (e.g. the UltiMed number rules), before the checks; ``oov_chars(text)``
     returns the characters that make ``text`` tokenize to <unk> (``[]`` when
     clean); ``drop_if(text)`` drops a line on top of that. Counts are over the
     input lines."""
     report = RenormReport(oov_dropped=drop_oov)
-    tmp = path.with_name(path.name + ".renorm.part")
+    dest = path if dest is None else dest
+    tmp = dest.with_name(dest.name + ".renorm.part")
     with open(path, encoding="utf-8") as src, open(tmp, "w", encoding="utf-8") as out:
         for line in src:
             if not line.strip():
@@ -95,8 +100,13 @@ def renormalize_manifest(
                 report.number_word_dropped.append(text)
                 continue
             out.write(line)
-    os.replace(tmp, path)
+    os.replace(tmp, dest)
     return report
+
+
+def suffixed(path: Path, suffix: str) -> Path:
+    """``x.json`` + ``.converted`` -> ``x.converted.json``."""
+    return path.with_name(path.stem + suffix + path.suffix)
 
 
 def main():
@@ -114,7 +124,12 @@ def main():
     numbers.add_argument("--drop-number-words", choices=sorted(NUMBER_WORD_FILTERS), default=None,
                          help="instead remove lines spelling a number in words in this language")
     ap.add_argument("--quiet-drops", action="store_true", help="print dropped labels as a count only")
+    ap.add_argument("--output-suffix", default=None,
+                    help="write each result beside its input as <stem><suffix><ext> (e.g. .converted) "
+                         "and leave the input untouched (default: rewrite in place)")
     args = ap.parse_args()
+    if args.output_suffix == "":
+        ap.error("--output-suffix must not be empty (omit it to rewrite in place)")
 
     # Heavy (NeMo) imports only once the arguments are valid.
     from nemo.collections.asr.parts.utils.label_vocab_check import label_oov_chars, load_tokenizer, unk_id_of
@@ -127,9 +142,11 @@ def main():
 
     n_oov_left = 0
     for path in args.files:
-        r = renormalize_manifest(path, lambda t: label_oov_chars(t, tokenizer, unk, cache), args.drop_oov, drop_if, convert)
+        dest = suffixed(path, args.output_suffix) if args.output_suffix else path
+        r = renormalize_manifest(path, lambda t: label_oov_chars(t, tokenizer, unk, cache), args.drop_oov, drop_if,
+                                 convert, dest)
         verb = "dropped" if r.oov_dropped else "KEPT (still <unk>)"
-        print(f"{path}: {r.total} lines, {r.changed} changed, {len(r.oov)} <unk> {verb}, "
+        print(f"{dest}: {r.total} lines, {r.changed} changed, {len(r.oov)} <unk> {verb}, "
               f"{len(r.converted)} converted, {len(r.number_word_dropped)} number-word dropped", flush=True)
         if not r.oov_dropped:
             n_oov_left += len(r.oov)

@@ -111,6 +111,19 @@ def test_renormalize_manifest_rewrites_text_in_place(tmp_path):
     assert list(tmp_path.iterdir()) == [path]
 
 
+def test_renormalize_manifest_output_suffix_leaves_the_input_untouched(tmp_path):
+    path = tmp_path / "m.json"
+    rows = _write(path, ["l’os", "clean"])
+    before = path.read_bytes()
+    dest = renorm.suffixed(path, ".converted")
+    assert dest == tmp_path / "m.converted.json"
+    r = renorm.renormalize_manifest(path, dest=dest)
+    assert (r.total, r.changed) == (2, 1)
+    assert path.read_bytes() == before
+    assert _texts(dest) == ["l'os", "clean"]
+    assert sorted(tmp_path.iterdir()) == sorted([path, dest])
+
+
 def test_renormalize_manifest_keeps_unchanged_lines_and_escaping(tmp_path):
     path = tmp_path / "m.json"
     clean = '{"text": "\\u00e9t\\u00e9",  "duration": 1}\n'
