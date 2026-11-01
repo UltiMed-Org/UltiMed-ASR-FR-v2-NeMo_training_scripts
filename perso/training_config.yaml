@@ -33,8 +33,8 @@
 #   drugs (2.5%), acronyms (0.1%). PARROT subset is CC BY-NC-SA,
 #   EVAL-ONLY: never in train, used as out-of-domain radiology monitor.
 #
-#   Validation: fleurs fr (de/en/fi/it/sv dropped 2026-11-01, French-only mix)
-#   + diy + drug_sentence + oli +
+#   Validation: fleurs fr + de/en/es/fi/it/sv (multilingual-loss monitors only,
+#   outside the checkpoint macro since 2026-11-01) + diy + drug_sentence + oli +
 #   united_syn_med + seeded UltiMed slices (built by
 #   perso/build_ultimed_val_slices.py, ~8 h total).
 #
@@ -952,8 +952,72 @@ model:
         prefetch_factor: 2
       # --------------------------------------------------------------------
 
+      # FLEURS de/en/es/fi/it/sv: observability-only monitors of the
+      # multilingual loss (user, 2026-11-01: keep them to see how far the
+      # French-only mix costs other languages). NOT in combined_macro; they
+      # feed fleurs_all7_macro_val_wer only. es is new (2026-11-01).
+      - name: fleurs_de
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/de/validation.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: fleurs_en
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/en/validation.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: fleurs_es
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/es/validation.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
       - name: fleurs_fr
         manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fr/validation.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: fleurs_fi
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fi/validation.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: fleurs_it
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/it/validation.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 2
+        persistent_workers: false
+        pin_memory: true
+        prefetch_factor: 2
+
+      - name: fleurs_sv
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/sv/validation.altered.json"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
@@ -1047,9 +1111,9 @@ model:
         pin_memory: true
         prefetch_factor: 4
 
-      # FLEURS test: only fr and en since 2026-11-01 (the other 23 languages
-      # dropped with the French-only mix). en stays as a manual generalization
-      # probe; test is run by hand.
+      # FLEURS test: fr, en, de, es, fi, it, sv since 2026-11-01 (the other 18
+      # languages dropped with the French-only mix). The non-French ones are
+      # manual multilingual-loss probes; test is run by hand.
       - name: fleurs_en
         manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/en/test.altered.json"
         sample_rate: 16000
@@ -1062,6 +1126,56 @@ model:
 
       - name: fleurs_fr
         manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fr/test.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 4
+        persistent_workers: true
+        pin_memory: true
+        prefetch_factor: 4
+
+      - name: fleurs_de
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/de/test.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 4
+        persistent_workers: true
+        pin_memory: true
+        prefetch_factor: 4
+
+      - name: fleurs_es
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/es/test.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 4
+        persistent_workers: true
+        pin_memory: true
+        prefetch_factor: 4
+
+      - name: fleurs_fi
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/fi/test.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 4
+        persistent_workers: true
+        pin_memory: true
+        prefetch_factor: 4
+
+      - name: fleurs_it
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/it/test.altered.json"
+        sample_rate: 16000
+        batch_size: 6
+        shuffle: false
+        num_workers: 4
+        persistent_workers: true
+        pin_memory: true
+        prefetch_factor: 4
+
+      - name: fleurs_sv
+        manifest_filepath: "./perso/downloaded_datasets_ignore-backups/fleurs/sv/test.altered.json"
         sample_rate: 16000
         batch_size: 6
         shuffle: false
@@ -1432,16 +1546,16 @@ macro_metrics:
   # and so are the nine per-voice sets: they resample the same val split as
   # the per-source slices, so putting them here would weigh the same audio
   # twice over. united_syn_med (English medical) is an eval-only
-  # generalization probe, never in a macro.
+  # generalization probe, never in a macro; FLEURS de/en/es/fi/it/sv
+  # feed only fleurs_all7_macro_val_wer.
   #
   # History: until 2026-11-01 this was 6 sets with fleurs_en, plus two
   # observability macros, fleurs_fr_en_macro_val_wer (fr+en) and
-  # fleurs_all6_macro_val_wer (fr/en/de/it/sv/fi, added in 1.6.0). All dropped
-  # 2026-11-01 when the mix went French only (deployment is French medical
-  # dictation and the model drifted into English on French audio); their
-  # source sets are gone, and config_audit refuses a macro whose source
-  # matches no validation set. So combined_macro values before and after
-  # that date are not comparable.
+  # fleurs_all6_macro_val_wer (fr/en/de/it/sv/fi, added in 1.6.0). On
+  # 2026-11-01 the mix went French only (deployment is French medical
+  # dictation and the model drifted into English on French audio): fleurs_en
+  # left the monitor, fr_en was dropped, all6 became fleurs_all7 below. So
+  # combined_macro values before and after that date are not comparable.
   #
   # oli_drug_sentence carries weight here despite being the smallest set,
   # because it is the ONLY real recorded human speech in the whole setup that
@@ -1462,6 +1576,19 @@ macro_metrics:
       - "ultimed_parhafval_wer"
       - "ultimed_drugsval_wer"
       - "oli_drug_sentenceval_wer"
+  # Multilingual loss across all 7 FLEURS validation sets. Replaces
+  # fleurs_all6_macro_val_wer (2026-11-01, es added). Observability only, NOT
+  # the checkpoint monitor: the training mix is French only now, and this is
+  # how much that costs the other languages the base model knew.
+  - name: "fleurs_all7_macro_val_wer"
+    sources:
+      - "fleurs_frval_wer"
+      - "fleurs_enval_wer"
+      - "fleurs_deval_wer"
+      - "fleurs_esval_wer"
+      - "fleurs_fival_wer"
+      - "fleurs_itval_wer"
+      - "fleurs_svval_wer"
 
 # Experiment manager - handles logging, checkpointing, etc.
 # documentation: https://github.com/NVIDIA-NeM./perso/nemo/blob/412ab81dd5b17f763ee3aa723c67679698649a7./perso/nemo/utils/exp_manager.py
