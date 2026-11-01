@@ -214,14 +214,17 @@ def convert_all(mp3_dir: Path, flac_dir: Path, lang: str, jobs: int):
 
 
 def build_manifest(cv_root: Path, lang: str, selected, flac_dir: Path,
-                   drop_number_words: bool = False, suffix: str = ""):
+                   drop_number_words: bool = False, suffix: str = "", known_durations=None):
     """Manifest rows only for clips whose FLAC exists and parses. Labels get the
     charset fold of label_charset, then for a language with a number rewrite
     (fr) the UltiMed label rules (numbers in digits, see
     renormalize_manifests.NUMBER_WORD_CONVERTERS), or with drop_number_words
     the labels spelling a number are dropped instead. Run
     perso/renormalize_manifests.py --drop-oov afterwards for what the fold
-    cannot fix (letters of other alphabets, & = + ...)."""
+    cannot fix (letters of other alphabets, & = + ...). known_durations maps an
+    audio_filepath to a duration already read from that FLAC's header (see
+    --durations-from), sparing a header read per clip."""
+    known_durations = known_durations or {}
     manifest = cv_root / f"cv_{lang}_train{suffix}.jsonl"
     drop_if = NUMBER_WORD_FILTERS.get(lang) if drop_number_words else None
     convert = None if drop_number_words or lang not in NUMBER_WORD_CONVERTERS else NUMBER_WORD_CONVERTERS[lang]()
@@ -236,11 +239,14 @@ def build_manifest(cv_root: Path, lang: str, selected, flac_dir: Path,
             if not flac.exists():
                 dropped += 1
                 continue
-            try:
-                dur = sf.info(str(flac)).duration
-            except Exception:
-                dropped += 1
-                continue
+            audio_filepath = f"clips_16k/{lang}/{stem}.flac"
+            dur = known_durations.get(audio_filepath)
+            if dur is None:
+                try:
+                    dur = sf.info(str(flac)).duration
+                except Exception:
+                    dropped += 1
+                    continue
             if not (MIN_S <= dur <= MAX_S):
                 dropped += 1
                 continue
@@ -252,7 +258,7 @@ def build_manifest(cv_root: Path, lang: str, selected, flac_dir: Path,
                 folded, text = text, convert(text)
                 converted += text != folded
             out.write(json.dumps(
-                {"audio_filepath": f"clips_16k/{lang}/{stem}.flac",
+                {"audio_filepath": audio_filepath,
                  "duration": round(dur, 3), "text": text},
                 ensure_ascii=False) + "\n")
             rows += 1
@@ -278,6 +284,10 @@ def main():
     ap.add_argument("--manifest-suffix", default="",
                     help="write cv_<lang>_train<SUFFIX>.jsonl, e.g. '.converted' to leave the live "
                          "manifest a running training reads untouched")
+    ap.add_argument("--durations-from", type=Path, nargs="*", default=[], metavar="MANIFEST",
+                    help="reuse the durations of these manifests (same CV root, e.g. the live "
+                         "cv_fr_train.jsonl) instead of re-reading each FLAC header: on a busy drive "
+                         "those reads run at ~10 clips/s")
     ap.add_argument("--manifest-only", action="store_true",
                     help="skip tar extraction and ffmpeg (FLACs already built): only rewrite the manifest; "
                          "a selected clip without its FLAC is dropped as usual")
@@ -288,6 +298,13 @@ def main():
     for pair in args.langs.split(","):
         lang, _, hours = pair.strip().partition(":")
         targets[lang] = float(hours)
+    known_durations = {}
+    for path in args.durations_from:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    row = json.loads(line)
+                    known_durations[row["audio_filepath"]] = row["duration"]
     summary = {}
     for lang, hours_target in targets.items():
         members = scan_members(cv_root, lang)
@@ -316,7 +333,7 @@ def main():
             log(f"[{lang}] extracted {extracted} new mp3s")
             convert_all(mp3_dir, flac_dir, lang, args.jobs)
         summary[lang] = build_manifest(cv_root, lang, selected, flac_dir,
-                                       args.drop_number_words, args.manifest_suffix)
+                                       args.drop_number_words, args.manifest_suffix, known_durations)
 
         if not args.keep_mp3 and not args.manifest_only:
             for p in mp3_dir.glob("*"):
