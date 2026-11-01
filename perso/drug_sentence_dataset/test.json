@@ -3,7 +3,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/b6b7732325339d860453.wav", "text": "Augmentation de la posologie de rifampicine à trois comprimés de 120 milligrammes par jour.", "duration": 6.0}
 {"audio_filepath": "./perso/drug_sentence_dataset/9bd8720c96d65a4bb641.wav", "text": "Je prescris du clotrimazole un comprimé de 200 milligrammes 3 fois par jour pour cette candidose buccale.", "duration": 9.0}
 {"audio_filepath": "./perso/drug_sentence_dataset/7ab23754b39c66df6d59.wav", "text": "Mise sous vigabatrine un comprimé de 500 milligrammes matin et soir pour les spasmes infantiles.", "duration": 9.1}
-{"audio_filepath": "./perso/drug_sentence_dataset/0d405e06234a5fb74104.wav", "text": "Le patient est sous fluindione un comprimé de 20 milligrammes, l'INR est à trois virgule deux, on diminue à un demi-comprimé par jour.", "duration": 10.2}
+{"audio_filepath": "./perso/drug_sentence_dataset/0d405e06234a5fb74104.wav", "text": "Le patient est sous fluindione un comprimé de 20 milligrammes, l'INR est à 3,2, on diminue à un demi-comprimé par jour.", "duration": 10.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/a30a56756e22aa8358b5.wav", "text": "Chez cette patiente âgée, on commence l'oxcarbazépine un comprimé de 150 milligrammes une fois par jour.", "duration": 8.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/0646f2cf7618308cc249.wav", "text": "Je prescris de la spironolactone un comprimé de 75 milligrammes le matin pour l'insuffisance cardiaque.", "duration": 8.3}
 {"audio_filepath": "./perso/drug_sentence_dataset/fc774ac67c21d7d789b3.wav", "text": "Prescription d'aciclovir un comprimé de 50 milligrammes 2 fois par jour en prophylaxie chez cet enfant.", "duration": 6.8}
@@ -98,7 +98,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/6e1f31c82526a7b9585a.wav", "text": "Renouvellement de l'ordonnance de sirolimus un comprimé de 2 milligrammes pour 3 mois.", "duration": 6.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/161ca78fd5fbfb41f2f8.wav", "text": "Le patient signale des vertiges sous valsartan un comprimé de 160 milligrammes, on envisage une réduction de dose.", "duration": 8.4}
 {"audio_filepath": "./perso/drug_sentence_dataset/14c6bc500c943bd5009b.wav", "text": "Mise sous nifédipine une gélule de 20 milligrammes toutes les 8 heures en traitement de la crise angineuse.", "duration": 7.8}
-{"audio_filepath": "./perso/drug_sentence_dataset/430b616bf1e771b62f92.wav", "text": "Instillation de fluorométholone collyre zéro virgule dix % une goutte matin midi et soir dans les deux yeux pour l'uvéite.", "duration": 10.3}
+{"audio_filepath": "./perso/drug_sentence_dataset/430b616bf1e771b62f92.wav", "text": "Instillation de fluorométholone collyre 0,10 % une goutte matin midi et soir dans les deux yeux pour l'uvéite.", "duration": 10.3}
 {"audio_filepath": "./perso/drug_sentence_dataset/37b0baae4cf4d0f5b6e2.wav", "text": "Réduction de la dose de nicorandil à un comprimé de 10 milligrammes une fois par jour en raison d'ulcérations buccales.", "duration": 9.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/1cfd33bf691105cfc58b.wav", "text": "Le patient est sous oméprazole dans le cadre d'une gastroprotection associée aux anti-inflammatoires.", "duration": 5.8}
 {"audio_filepath": "./perso/drug_sentence_dataset/f2a2e36514f14b4a27ba.wav", "text": "Nouvelle augmentation du pérampanel à un comprimé de 8 milligrammes au coucher pour améliorer le contrôle des crises.", "duration": 8.2}
@@ -110,7 +110,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/e7dc1c820265ca9e69da.wav", "text": "Je prescris de la phénytoïne un comprimé de 100 milligrammes 3 fois par jour pour le traitement de l'épilepsie.", "duration": 7.9}
 {"audio_filepath": "./perso/drug_sentence_dataset/c04463814f987c054b89.wav", "text": "Le patient tolère bien l'aprépitant dans le cadre de son protocole antiémétique.", "duration": 5.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/c194f10a8b08bc37afa1.wav", "text": "Mise en place d'un traitement associant allopurinol et colchicine un comprimé de 1 milligramme pour couvrir la phase initiale.", "duration": 10.1}
-{"audio_filepath": "./perso/drug_sentence_dataset/6f55a99f1f3e20c1b943.wav", "text": "Je recommande de prendre l'alfa-amylase un comprimé de trois mille U.CEIP juste avant ou pendant le repas principal.", "duration": 10.1}
+{"audio_filepath": "./perso/drug_sentence_dataset/6f55a99f1f3e20c1b943.wav", "text": "Je recommande de prendre l'alfa-amylase un comprimé de 3000 U.CEIP juste avant ou pendant le repas principal.", "duration": 10.1}
 {"audio_filepath": "./perso/drug_sentence_dataset/c604b406314b9b186bb4.wav", "text": "Je mets le patient sous ticagrélor un comprimé de 90 milligrammes 2 fois par jour suite à son syndrome coronarien aigu.", "duration": 11.4}
 {"audio_filepath": "./perso/drug_sentence_dataset/0bb62a320f28c92e7cf8.wav", "text": "Poursuite du protocole avec encorafénib une gélule de 75 milligrammes matin midi et soir, bonne réponse tumorale au scanner.", "duration": 9.9}
 {"audio_filepath": "./perso/drug_sentence_dataset/71bd88b1ab935cccf26b.wav", "text": "Traitement de fond bien toléré, poursuite de la théophylline une gélule de 300 milligrammes 2 fois par jour.", "duration": 8.8}
@@ -147,7 +147,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/09ef12a5591dbba7df4f.wav", "text": "Le patient débute un nouveau cycle de melphalan un comprimé de 2 milligrammes à raison de neuf comprimés par jour pendant 5 jours.", "duration": 9.1}
 {"audio_filepath": "./perso/drug_sentence_dataset/92cd0b23f8ecbd0637c9.wav", "text": "On débute l'éplérénone un comprimé de 25 milligrammes par jour avec surveillance de la kaliémie à prévoir.", "duration": 8.0}
 {"audio_filepath": "./perso/drug_sentence_dataset/3b6bab046c3580ba17a7.wav", "text": "On diminue le carbimazole à un comprimé de 5 milligrammes le matin suite à la normalisation de la TSH.", "duration": 9.8}
-{"audio_filepath": "./perso/drug_sentence_dataset/fcfedb1eaa698a5e6973.wav", "text": "Arrêt temporaire du carvédilol un comprimé de 12,50 milligrammes en raison d'une bradycardie à quarante-huit battements par minute.", "duration": 9.9}
+{"audio_filepath": "./perso/drug_sentence_dataset/fcfedb1eaa698a5e6973.wav", "text": "Arrêt temporaire du carvédilol un comprimé de 12,50 milligrammes en raison d'une bradycardie à 48 battements par minute.", "duration": 9.9}
 {"audio_filepath": "./perso/drug_sentence_dataset/21cd4e2550c48b5b4191.wav", "text": "La patiente prend du médrogestone un comprimé de 5 milligrammes pendant 10 jours par mois depuis trois cycles.", "duration": 8.1}
 {"audio_filepath": "./perso/drug_sentence_dataset/c7004921474ac0351850.wav", "text": "Prescription de tadalafil un comprimé de 10 milligrammes à la demande avec un maximum de trois prises par semaine.", "duration": 9.5}
 {"audio_filepath": "./perso/drug_sentence_dataset/4e753661fb0e1df34971.wav", "text": "Renouvellement de l'ordonnance de tafamidis une capsule de 61 milligrammes pour 3 mois.", "duration": 7.8}
@@ -189,7 +189,7 @@
 {"audio_filepath": "./perso/drug_sentence_dataset/d312425398cd4ae78904.wav", "text": "Chez cette patiente de 82 ans, on commence l'oxazépam un comprimé de 10 milligrammes le soir.", "duration": 7.7}
 {"audio_filepath": "./perso/drug_sentence_dataset/894d3ca3b28a8c4b7f40.wav", "text": "Instauration d'un traitement par luméfantrine un comprimé de 120 milligrammes en association fixe avec l'artéméther.", "duration": 7.3}
 {"audio_filepath": "./perso/drug_sentence_dataset/b86f10b389cb5beb8f2b.wav", "text": "Le patient signale avoir oublié deux prises d'emtricitabine une gélule de 200 milligrammes cette semaine, je renforce l'éducation thérapeutique.", "duration": 10.9}
-{"audio_filepath": "./perso/drug_sentence_dataset/e316ce288d7df6620473.wav", "text": "Sous pipobroman un comprimé de 25 milligrammes 2 fois par jour, le patient présente une légère leucopénie à trois mille, surveillance rapprochée.", "duration": 10.2}
+{"audio_filepath": "./perso/drug_sentence_dataset/e316ce288d7df6620473.wav", "text": "Sous pipobroman un comprimé de 25 milligrammes 2 fois par jour, le patient présente une légère leucopénie à 3000, surveillance rapprochée.", "duration": 10.2}
 {"audio_filepath": "./perso/drug_sentence_dataset/bdf6a71c031cdfda5dd4.wav", "text": "Réduction de dose du thalidomide à une gélule de 50 milligrammes tous les 2 jours en raison de la somnolence.", "duration": 7.4}
 {"audio_filepath": "./perso/drug_sentence_dataset/45139db5d9cf4295f1ea.wav", "text": "La patiente a pris de la zopiclone un comprimé de 3,75 milligrammes de manière occasionnelle le mois dernier.", "duration": 9.5}
 {"audio_filepath": "./perso/drug_sentence_dataset/70a30aae714991222323.wav", "text": "J'ajoute de la rifaximine un comprimé de 550 milligrammes 2 fois par jour en prévention des épisodes de confusion.", "duration": 9.5}
