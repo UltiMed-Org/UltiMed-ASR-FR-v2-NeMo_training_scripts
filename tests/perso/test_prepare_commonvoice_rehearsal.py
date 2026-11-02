@@ -181,6 +181,9 @@ _CONVERSIONS = [
     # quantity context.
     ("Prendre un comprimé et deux gélules.", "Prendre 1 comprimé et 2 gélules."),
     ("Il revient dans un an.", "Il revient dans 1 an."),
+    # 2026-11-02: an elided one before a unit, and a single number word before "%".
+    ("Il attendit plus d'une heure.", "Il attendit plus d'1 heure."),
+    ("Un succès à cent pour cent.", "Un succès à 100 %."),
 ]
 # Left spelled by the UltiMed rules: ordinals, a lone number word, "un" as an article.
 _UNTOUCHED = [
@@ -191,6 +194,8 @@ _UNTOUCHED = [
     # A lone "un" before a duration outside a quantity context (2026-11-01).
     "Un an plus tard, il revint.",
     "Et un jour, le fiancé partit.",
+    # 2026-11-02: "une année" stays in any context, "d'une part" is no quantity.
+    "Pendant une année olympique, d'une part.",
 ]
 
 

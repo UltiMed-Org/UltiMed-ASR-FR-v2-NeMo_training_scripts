@@ -22,8 +22,8 @@ Two normalizers are exposed, both built from functions imported from that repo:
   of ``label_conventions.apply_label_conventions``.
 - :func:`general_french_label_normalizer`, what Common Voice rehearsal uses, is the same
   chain with ``apply_label_conventions`` cut down to the steps that hold on general French:
-  titles, dates, clock times, quantities, thousands and compound numbers (in
-  ``apply_label_conventions``'s own order). The rest is medical and misfires on
+  titles, dates, clock times, quantities, then ``normalize_label_numbers`` (elided ``d'un``
+  before a unit, thousands and compound numbers; in ``apply_label_conventions``'s own order). The rest is medical and misfires on
   encyclopedic sentences, measured on the 139k CV-fr labels on 2026-11-01: the
   prefix-compound rule glued 854 labels (``néo-zélandais`` -> ``néozélandais``, ``péri
   pendant`` -> ``péripendant``), ``normalize_spelling`` turned 44 ``colons`` (settlers)
@@ -31,8 +31,8 @@ Two normalizers are exposed, both built from functions imported from that repo:
   generic-lab strip deleted ``Sandoz`` from ``dit Sandoz.``, and the roman / staging rules
   read ``type II``-like text as medical staging. Cost of skipping ``normalize_spelling``:
   CV keeps ``œ`` (``cœur``, 1.9k labels) where UltiMed writes ``oe``. Kept steps still
-  include ``normalize_quantities``, so ``un an plus tard`` -> ``1 an plus tard`` as in
-  UltiMed.
+  include ``normalize_quantities``, so ``dans un an`` -> ``dans 1 an`` as in UltiMed
+  (``Un an plus tard`` stays, as it does there).
 
 The ParakeetTokenizer reads the dataset repo's ``utils/parakeet_vocab.txt``, the same file
 as this repo's ``perso/exports/ultimed/2026-09-01-web2/vocab.txt``. Needs ``click`` and
@@ -96,7 +96,7 @@ def _label_normalizer(root: Path) -> Callable[[str], str]:
 def _general_french(text: str, mod, lc, tok) -> str:
     text = lc.normalize_quantities(lc.normalize_clock(lc.normalize_dates(lc.expand_titles(
         mod.percent_to_symbol(tok.clean_label(text))))))
-    return lc.normalize_thousands(lc.normalize_numbers(lc.normalize_thousands(text)))
+    return lc.normalize_label_numbers(text)
 
 
 @functools.lru_cache(maxsize=None)
