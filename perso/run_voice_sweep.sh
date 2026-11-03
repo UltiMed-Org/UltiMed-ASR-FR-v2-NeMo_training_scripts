@@ -48,7 +48,8 @@ VOICES=(fr_female h_itf_arm h_frf_ptm h_frf_esm h_frm_nlf h_frm_ptf h_frf_itm h_
 failed=()
 for v in "${VOICES[@]}"; do
   VER="2.3.voice-$v-$STEPS"
-  if ls "$EXP_DIR/$VER/checkpoints/"*"step=$STEPS-"*.ckpt >/dev/null 2>&1; then
+  # Layout is <exp_dir>/<exp_manager.name>/<version>/checkpoints/; glob the name.
+  if ls "$EXP_DIR"/*/"$VER/checkpoints/"*"step=$STEPS-"*.ckpt >/dev/null 2>&1; then
     echo "[sweep] $(date '+%F %T') $VER already has its step-$STEPS checkpoint, skipping"
     continue
   fi
