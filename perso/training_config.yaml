@@ -1547,7 +1547,23 @@ normalised_wer: true
 # examples/asr/speech_to_text_finetune_cached.py, which writes the result
 # into trainer.callback_metrics so it can serve as the checkpoint monitor.
 macro_metrics:
-  # Checkpoint monitor: equal-weight macro of 5 sets, ALL FRENCH: FLEURS fr
+  # CHECKPOINT MONITOR since 2026-11-03: the two REAL-speech French sets only,
+  # FLEURS fr (general French, 350 clips) and oli (in-domain human dictation,
+  # 205 clips), equal weight. The per-voice attribution sweep of 2026-11-03
+  # (2.3.voice-*, see v2 memory) showed that the synthetic UltiMed val slices
+  # cannot see voice damage: four hybrid voices trained alone were 2-5 points
+  # behind the shipped voices on oli + fleurs_fr while dictionary and parhaf
+  # (same TTS voices as the training audio) ranked them anywhere. A monitor
+  # that is 3/5 synthetic therefore picks checkpoints on TTS self-consistency.
+  # Noisier than combined_macro (555 real clips instead of ~4,000), which is
+  # why save_top_k stays at 5. combined_macro below is kept as observability
+  # and for continuity with the 2.2.x curves.
+  - name: "real_macro_val_wer"
+    sources:
+      - "fleurs_frval_wer"
+      - "oli_drug_sentenceval_wer"
+  # Former checkpoint monitor (until 2026-11-03), now observability only:
+  # equal-weight macro of 5 sets, ALL FRENCH: FLEURS fr
   # (general-French forgetting guard), the three main in-domain UltiMed
   # slices, and oli (see below). A gain on medical French only counts if it
   # does not cost general French. acronyms (tiny, noisy) and parrot
@@ -1792,16 +1808,16 @@ exp_manager:
     # NeMo names the WER metric "val_wer" and prefixes the per-dataset
     # variants: diyval_wer, drug_sentenceval_wer, etc. The normalised twins add
     # a _norm suffix (see normalised_wer below) and are logged, not monitored.
-    # Monitor the combined macro (see macro_metrics above): 5 French sets,
-    # FLEURS fr + the three main UltiMed slices + oli (FLEURS en dropped
-    # 2026-11-01, French-only mix; the paragraph below predates that). A French-only or in-domain-only
-    # monitor is blind to language tipping: training data is ~99% French TTS,
-    # so the model could drift its language prior toward French and look
-    # great in-domain while regressing elsewhere. (Same failure mode hit
-    # during the SmoothQuant calibration of this model, where degraded
-    # English embeddings tipped outputs into English; see the HF repo linked
-    # in the latent_augment section.)
-    monitor: "combined_macro_val_wer"
+    # Monitor the real-speech macro (see macro_metrics above): FLEURS fr + oli,
+    # the only two validation sets that are human speech. Until 2026-11-03 this
+    # was combined_macro (those two plus the three main UltiMed slices), which
+    # the voice sweep showed to be blind to TTS voice damage. FLEURS fr keeps
+    # the general-French guard: training data is ~99% French TTS, so the model
+    # could drift its language prior and look great in-domain while regressing
+    # elsewhere. (Same failure mode hit during the SmoothQuant calibration of
+    # this model, where degraded English embeddings tipped outputs into
+    # English; see the HF repo linked in the latent_augment section.)
+    monitor: "real_macro_val_wer"
     mode: min  # Lower is better
     # 5 rather than 2: with no early stopping the run goes the full 12 epochs,
     # so keeping a wider band of the best checkpoints leaves room to compare
@@ -1812,7 +1828,7 @@ exp_manager:
     save_best_model: true
     # {step} is REQUIRED: validation runs many times per epoch, so an
     # epoch-only filename would collide/overwrite across rounds.
-    filename: "parakeet-tdt-ultimed-{epoch}-{step}-{combined_macro_val_wer:.4f}"
+    filename: "parakeet-tdt-ultimed-{epoch}-{step}-{real_macro_val_wer:.4f}"
     always_save_nemo: true  # Save as .nemo format
 
   # Logging
