@@ -844,7 +844,12 @@ model:
         pin_memory: true
         prefetch_factor: 2
 
-      # --- per-voice UltiMed monitors (v2 is spoken by nine TTS voices) ---
+      # --- per-voice UltiMed monitors (v2 is spoken by five TTS voices) ---
+      # 2026-11-07: down from nine. S2 retired h_frf_itm, h_frm_ptf, h_frf_ptm
+      # and h_itf_arm (per-voice sweep, 2026-11-03) and regenerated their clips
+      # with the five survivors, so their val.voice.<v> slices on disk are stale
+      # (mixed survivor voices, one missing file) and were removed here. The
+      # "nine" below describes the 2.0.0-2.3 runs that introduced these sets.
       # One slice per voice, 75 clips each with the SAME fixed category mix
       # (40 dictionary / 25 parhaf / 10 drugs), built by
       # perso/build_ultimed_val_slices.py (VOICE_QUOTAS, which documents the
@@ -897,25 +902,6 @@ model:
         pin_memory: true
         prefetch_factor: 2
 
-      - name: voice_h_frf_itm
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frf_itm.down-75.jsonl"
-        sample_rate: 16000
-        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
-
-      - name: voice_h_frf_ptm
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frf_ptm.down-75.jsonl"
-        sample_rate: 16000
-        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
 
       - name: voice_h_frm_nlf
         manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frm_nlf.down-75.jsonl"
@@ -927,25 +913,6 @@ model:
         pin_memory: true
         prefetch_factor: 2
 
-      - name: voice_h_frm_ptf
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_frm_ptf.down-75.jsonl"
-        sample_rate: 16000
-        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
-
-      - name: voice_h_itf_arm
-        manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_itf_arm.down-75.jsonl"
-        sample_rate: 16000
-        batch_size: 6  # fallback only (cost_batching above sizes the real batch)
-        shuffle: false
-        num_workers: 2
-        persistent_workers: false
-        pin_memory: true
-        prefetch_factor: 2
 
       - name: voice_h_itf_def
         manifest_filepath: "./perso/ultimed_data_ignore-backups/v2/NeMO_files/val.voice.h_itf_def.down-75.jsonl"
