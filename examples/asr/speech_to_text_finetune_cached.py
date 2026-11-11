@@ -56,6 +56,31 @@ import os
 import types
 import time
 
+
+def _pin_tmpdir_to_exp_drive():
+    """Send temp files to the experiment drive instead of /tmp.
+
+    Lightning saves a checkpoint through ``fsspec``'s transaction, which writes the
+    whole file (3.3 GB here) to ``tempfile.mkstemp()`` and only then moves it into
+    place, and NeMo unpacks every ``.nemo`` it restores into a temp dir too. On a
+    workstation where /tmp is a RAM-backed tmpfs shared with everything else, that
+    made a save die with ``OSError: [Errno 28] No space left on device`` while the
+    checkpoint drive had 500 GB free (2026-11-11, run 3.3.seed7-15k, step 3000), and
+    the relaunch then died the same way before training. An explicit TMPDIR wins.
+    Must run before anything calls ``tempfile.gettempdir()``, hence before the
+    torch / NeMo imports below. The directory name carries ``ignore_backups`` so
+    restic skips it. Written by Claude Code.
+    """
+    exp_dir = os.environ.get("NEMO_EXP_DIR")
+    if os.environ.get("TMPDIR") or not exp_dir:
+        return
+    tmp_dir = os.path.join(exp_dir, "tmp_ignore_backups")
+    os.makedirs(tmp_dir, exist_ok=True)
+    os.environ["TMPDIR"] = tmp_dir
+
+
+_pin_tmpdir_to_exp_drive()
+
 # PyTorch 2.6+ defaults torch.load to weights_only=True, but NeMo
 # checkpoints contain OmegaConf objects which are not in the default
 # allowlist. Allowlisting them here avoids UnpicklingError on checkpoint
