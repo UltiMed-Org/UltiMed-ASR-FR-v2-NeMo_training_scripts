@@ -16,27 +16,36 @@ import argparse
 import json
 from pathlib import Path
 
-# label -> eval manifest (the same downsampled val sets the training monitor
+# Default manifest directory (v1). Pass --manifest-dir to build from another
+# export with the same filenames, e.g. .../ultimed_data_ignore-backups/v2/NeMO_files.
+MANIFEST_DIR = "./perso/ultimed_data_ignore-backups/NeMO_files"
+
+# label -> eval manifest, relative to --manifest-dir (the same downsampled val sets the training monitor
 # used for the in-domain part of combined_macro_val_wer, plus acronyms)
 SETS = {
-    "med_dictionary": "./perso/ultimed_data_ignore-backups/NeMO_files/val.dictionary.down-600.jsonl",
-    "med_parhaf": "./perso/ultimed_data_ignore-backups/NeMO_files/val.parhaf.down-300.jsonl",
-    "med_drugs": "./perso/ultimed_data_ignore-backups/NeMO_files/val.drugs.down-300.jsonl",
-    "med_acronyms": "./perso/ultimed_data_ignore-backups/NeMO_files/val.acronyms.down-150.jsonl",
-    "med_drug_sentence": "./perso/drug_sentence_dataset/val.json",
+    "med_dictionary": "val.dictionary.down-600.jsonl",
+    "med_parhaf": "val.parhaf.down-300.jsonl",
+    "med_drugs": "val.drugs.down-300.jsonl",
+    "med_acronyms": "val.acronyms.down-150.jsonl",
     # PARROT is eval-only: unlike the val.*.down-* sets above it was never
     # used to monitor training, so it is the one genuinely held-out medical set.
-    "med_parrot": "./perso/ultimed_data_ignore-backups/NeMO_files/PARROT/test.down-200.jsonl",
+    "med_parrot": "PARROT/test.down-200.jsonl",
+}
+
+# label -> manifest relative to the repo root, NOT to --manifest-dir: the
+# drug_sentence set has a single version shared by every export.
+FIXED_SETS = {
+    "med_drug_sentence": "./perso/drug_sentence_dataset/val.json",
 }
 
 # Release test split (never trained on, never used for checkpoint selection),
 # 10,000 clips sampled by build_ultimed_val_slices.py, plus all of PARROT test.
 TEST_SETS = {
-    "test_dictionary": "./perso/ultimed_data_ignore-backups/NeMO_files/test.dictionary.down-5290.jsonl",
-    "test_parhaf": "./perso/ultimed_data_ignore-backups/NeMO_files/test.parhaf.down-2500.jsonl",
-    "test_drugs": "./perso/ultimed_data_ignore-backups/NeMO_files/test.drugs.down-2059.jsonl",
-    "test_acronyms": "./perso/ultimed_data_ignore-backups/NeMO_files/test.acronyms.down-151.jsonl",
-    "test_parrot": "./perso/ultimed_data_ignore-backups/NeMO_files/PARROT/test.jsonl",
+    "test_dictionary": "test.dictionary.down-5290.jsonl",
+    "test_parhaf": "test.parhaf.down-2500.jsonl",
+    "test_drugs": "test.drugs.down-2059.jsonl",
+    "test_acronyms": "test.acronyms.down-151.jsonl",
+    "test_parrot": "PARROT/test.jsonl",
 }
 
 
@@ -80,10 +89,17 @@ def build(label: str, manifest: Path, out_root: Path) -> None:
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default="./perso/ultimed_data_ignore-backups/wer_fixtures")
+    ap.add_argument("--manifest-dir", default=MANIFEST_DIR,
+                    help="directory holding the val.*/test.*/PARROT manifests "
+                         "(default: the v1 export)")
     args = ap.parse_args()
     out_root = Path(args.out)
-    for label, mf in {**SETS, **TEST_SETS}.items():
-        build(label, Path(mf), out_root)
+    manifest_dir = Path(args.manifest_dir)
+    manifests = {label: manifest_dir / mf for label, mf in {**SETS, **TEST_SETS}.items()}
+    manifests.update({label: Path(mf) for label, mf in FIXED_SETS.items()})
+    for label, mf in manifests.items():
+        assert mf.exists(), f"missing manifest for {label}: {mf}"
+        build(label, mf, out_root)
     print("DONE")
 
 
