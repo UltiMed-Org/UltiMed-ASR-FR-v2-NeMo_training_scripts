@@ -6,13 +6,17 @@ Working exports of NeMo checkpoints, nested as `exports/<checkpoint>/<date>-<var
 |---|---|---|
 | `ultimed/2026-08-31-plain/` | UltiMed fine-tune (`parakeet-tdt-0.6b-v3-ultimed.nemo`) | plain NeMo export: `encoder-model.onnx` graph plus per-tensor external data files, `decoder_joint-model.onnx`, `vocab.txt` |
 | `ultimed/2026-09-01-web2/` | same checkpoint | the web-optimized re-export (encoder web-export flags: mask-free graph, runtime rel-pos positional encoding, padded-batch NaN tripwire): `encoder-model.web2.onnx` (+ `.data`, 4682 nodes) and its graph-optimized form `encoder-model.web2.opt.onnx` (+ `.data`, 2247 nodes). The `.opt` graph is the one that was sharded into the UltiMed model folder's `fp32/encoder-model.onnx` |
+| `ultimed-v2/2026-11-13-plain/` | UltiMed v2 (`parakeet-tdt-0.6b-v3-ultimed-v2-mix7.nemo`, the `mix7` weight soup of run `3.0.0-spd1.0-15k`, turned into a `.nemo` by `perso/ckpt_to_nemo.py`) | plain NeMo export (4955 encoder nodes): same layout as `ultimed/2026-08-31-plain/` |
+| `ultimed-v2/2026-11-13-web/` | same checkpoint | `--web-optimized` export with the key-only padding bias (4803 encoder nodes, same as the v1 2026-10-02 rebuild): the input of `parakeet-tdt-0.6b-v3-ultra-onnx/scripts/build-from-nemo-export.sh`, which built the v2 fp32/fp16/int8/w4a8 folders outside this repo |
 
 The stock `nvidia/parakeet-tdt-0.6b-v3` checkpoint **was** exported through this path on 2026-09-08, plain and `--web-optimized` (4955 and 4682 nodes; the web one folds to 2110). Those two export folders live in the model repo's own gitignored scratch area, `parakeet-tdt-0.6b-v3-optimized-onnx/local/nemo-export/stock/`, rather than here, because only `perso/exports/ultimed/` is gitignored in this repo and adding a second ignore entry was not wanted. The web-optimized export is what the `parakeet-tdt-0.6b-v3-optimized-onnx` repo root now ships; its earlier istupakov-derived generation was moved down into that repo's `istupakov_smoothquant/` folder and is still published.
 
 Note for anyone re-running `perso/export_onnx.py`: the `.venv` here advertises an editable install of `nemo_toolkit` whose finder mapping is empty, so `import nemo` resolves only when the fork root happens to be `sys.path[0]`. That is true for `python -c` but not for `python perso/export_onnx.py`, which fails outright. Run it with `PYTHONPATH=<fork root>`. The script's PEP 723 header nominally allows `uv run`, but that would install **stock** NeMo from PyPI, where the `--web-optimized` flags are unrecognized attributes that get silently ignored, yielding a plain export under a web-optimized name.
 
-Exports made before 2026-10-02 (everything listed above) are mask-free graphs: batch 1 or equal-length batches only. From 2026-10-02 `--web-optimized` emits the key-only padding bias instead (`export_key_pad_mask`), so new exports also accept mixed-length batches.
+Exports made before 2026-10-02 (the two `ultimed/` rows above) are mask-free graphs: batch 1 or equal-length batches only. From 2026-10-02 `--web-optimized` emits the key-only padding bias instead (`export_key_pad_mask`), so new exports also accept mixed-length batches.
 
 Shipping copies live in `parakeet_web/fallback_models/Olicorne/<repo>/`, grouped by precision folder (`fp32/`, `fp16/`, `int8/`, `w4a8/`, `int8-lite/`) with the canonical basenames unchanged.
 
-Nesting introduced on 2026-09-03 with Claude Code; the stock export note added 2026-09-08, likewise with Claude Code.
+Nesting introduced on 2026-09-03 with Claude Code; the stock export note added 2026-09-08, likewise with Claude Code; the `ultimed-v2/` rows added 2026-11-13 with Claude Code.
+
+Note that `ultimed-v2/` is NOT covered by the `perso/exports/ultimed/` ignore entry, so it shows up as untracked in `git status`: do not `git add` it.
