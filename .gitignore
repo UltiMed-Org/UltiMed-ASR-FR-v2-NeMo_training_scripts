@@ -211,6 +211,7 @@ perso/oli_spoken_dataset/
 # redistributed from here.
 perso/calibration_audio_medical/
 perso/exports/ultimed/
+perso/exports/ultimed-v2/
 perso/benchmark_results.jsonl
 perso/benchmark_results.md
 perso/eval_results.jsonl
