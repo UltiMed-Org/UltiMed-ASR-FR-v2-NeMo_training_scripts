@@ -210,7 +210,7 @@ perso/oli_spoken_dataset/
 # PARHAF-derived clips, exports/ultimed/ holds built model artifacts; neither is
 # redistributed from here.
 perso/calibration_audio_medical/
-perso/exports/ultimed/
+perso/exports/ultimed
 perso/exports/ultimed-v2/
 perso/benchmark_results.jsonl
 perso/benchmark_results.md
