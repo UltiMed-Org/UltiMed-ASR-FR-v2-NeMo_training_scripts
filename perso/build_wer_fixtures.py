@@ -58,7 +58,10 @@ def resolve(manifest: Path, audio_filepath: str) -> Path:
     return path
 
 
-def build(label: str, manifest: Path, out_root: Path) -> None:
+def build(label: str, manifest: Path, out_root: Path, only_stems: set | None = None) -> None:
+    # only_stems keeps just the rows whose audio stem is listed (e.g. the
+    # re-synthesised clips), under the SAME "NNNNN_" name the full fixture
+    # gives them, so a partial re-run can be spliced back by name.
     out_dir = out_root / label
     wav_dir = out_dir / "wavs_validation"
     wav_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +73,8 @@ def build(label: str, manifest: Path, out_root: Path) -> None:
                 continue
             r = json.loads(line)
             src = resolve(manifest, r["audio_filepath"])
+            if only_stems is not None and src.stem not in only_stems:
+                continue
             if not src.exists():
                 missing += 1
                 continue
@@ -92,14 +97,20 @@ def main():
     ap.add_argument("--manifest-dir", default=MANIFEST_DIR,
                     help="directory holding the val.*/test.*/PARROT manifests "
                          "(default: the v1 export)")
+    ap.add_argument("--only-stems", default=None,
+                    help="text file, one audio stem per line: build only those rows "
+                         "(original NNNNN_ names kept), e.g. 06_hotfixes/resynth_stems.txt")
     args = ap.parse_args()
+    only_stems = None
+    if args.only_stems:
+        only_stems = {l.strip() for l in open(args.only_stems, encoding="utf-8") if l.strip()}
     out_root = Path(args.out)
     manifest_dir = Path(args.manifest_dir)
     manifests = {label: manifest_dir / mf for label, mf in {**SETS, **TEST_SETS}.items()}
     manifests.update({label: Path(mf) for label, mf in FIXED_SETS.items()})
     for label, mf in manifests.items():
         assert mf.exists(), f"missing manifest for {label}: {mf}"
-        build(label, mf, out_root)
+        build(label, mf, out_root, only_stems)
     print("DONE")
 
 
