@@ -443,8 +443,10 @@ model:
     # the previous runs. The CV share is set by how many hours were
     # physically sampled (see the prep script).
     #
-    # ONE upsampling, drug names: UltiMed's drugs rows are only 17,823 clips /
-    # 62.8 h (2.3% of the mix above), while drug names are what a medical
+    # ONE upsampling, drug names: UltiMed's drugs rows are only 17,822 clips /
+    # 67.9 h as rebuilt on 2026-11-19 (the shares quoted here were computed
+    # when it was 62.8 h, so read them as approximate: 2.3% of the mix
+    # above), while drug names are what a medical
     # dictation model gets most visibly wrong. train.drugs.jsonl (every drugs
     # row of train.jsonl, written by perso/build_ultimed_val_slices.py) is
     # listed 3 extra times, i.e. each drug clip is seen 4x per epoch: drugs
@@ -1755,12 +1757,14 @@ exp_manager:
   #        rather than ~1.97; and max_duration 38.0 drops 46% of PARHAF's
   #        hours (404.7 -> 219.8 over the whole release) against 31% in v1,
   #        which is the only long-form signal in the mix.
-  #        NOT launchable as written: the v2 slices this config points at
-  #        (val.*.down-N, test.*.down-N, PARROT/test.down-200) and the 4x
-  #        upsample train.drugs.jsonl do not exist yet. Build them with
+  #        The v2 slices this config points at (val.*.down-N,
+  #        test.*.down-N, PARROT/test.down-200) and the 4x upsample
+  #        train.drugs.jsonl were rebuilt on 2026-11-19, after the QC
+  #        repair rounds and the label fixes. Rebuild them with
   #        `perso/build_ultimed_val_slices.py --nemo-files-dir
-  #        <ssd>/audio_datasets/v2/NeMO_files` AFTER the QC repair round
-  #        settles the audio, since a repaired clip changes its duration.
+  #        <ssd>/audio_datasets/v2/NeMO_files` after ANY later change to
+  #        the release manifests, since a repaired clip changes its
+  #        duration and a label fix changes the row.
   #
   # This is also the run directory name, so a new value starts a clean run and
   # leaves the previous one resumable. 1.7.0's run directory holds a finished
