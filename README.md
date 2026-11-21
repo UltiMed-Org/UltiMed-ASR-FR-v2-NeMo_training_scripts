@@ -34,34 +34,11 @@ record what actually ran.
 
 ## Contents
 
-- [Related repositories](#related-repositories)
 - [What each patch does](#what-each-patch-does)
 - [Reproducing](#reproducing)
 - [Reading the tree](#reading-the-tree)
 - [What is deliberately not in this repo](#what-is-deliberately-not-in-this-repo)
 - [Credits and licence](#credits-and-licence)
-
-## Related repositories
-
-This fork is one piece of a French medical ASR stack; every other piece is public.
-
-| Repository | What it is |
-| --- | --- |
-| [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) | The dataset the fine-tune was trained on: 601,338 clips / 3,105 h of synthesized French medical speech, plus an eval-only [PARROT](https://doi.org/10.1016/j.ejrai.2025.100066) subset. |
-| [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
-| [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | The multilingual baseline the fine-tune builds on: the upstream ONNX re-quantized for int8 accuracy on long audio and graph-optimized for browser speed. |
-| [UltiMed-ASR-FR-v2-scripts](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-scripts) | The open recipe that built that dataset end to end: text sources, spoken-form normalization, the batch synthesis client, and the transcribe-and-rescore QC pass. |
-| **This repository** | The NeMo fork and training configs used for the fine-tune, documented here. |
-| [UltiMed-ASR-FR-v1-Voxtral](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v1-Voxtral) | The Voxtral TTS container that spoke every clip of the dataset: Dockerfile, tuning, and the vllm-omni patches. |
-| [Parakeet Web](https://github.com/thiswillbeyourgithub/parakeet_web) | The in-browser ASR app that loads either ONNX model, live at [parakeetweb.olicorne.org](https://parakeetweb.olicorne.org/). Everything runs client-side. |
-
-Upstream base model: [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), on top of [NVIDIA-NeMo/NeMo](https://github.com/NVIDIA-NeMo/NeMo).
-
-**The detailed engineering notes are in the tree itself**, not in a separate document, so they
-cannot drift away from what they describe. `perso/training_config.yaml` is annotated at length:
-the VRAM cost model and the ten measured OOM points it was fitted on, why each setting is the
-value it is, and what to change first when it has to move. The commit messages below explain
-each patch. The launcher scripts document themselves in their headers.
 
 ## What each patch does
 
