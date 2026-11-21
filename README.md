@@ -21,7 +21,7 @@ Part of [UltiMed-Org](https://github.com/UltiMed-Org), which lists every UltiMed
 
 **This repository is a fork of [NVIDIA-NeMo/NeMo](https://github.com/NVIDIA-NeMo/NeMo).**
 It is not a general-purpose NeMo distribution and it is not maintained as one. It exists to
-document, reproducibly, how [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx)
+document, reproducibly, how [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx)
 was fine-tuned: the patches NeMo needed, the training configuration, and the reasoning behind
 both. If you want NeMo itself, go upstream.
 
@@ -48,7 +48,7 @@ This fork is one piece of a French medical ASR stack; every other piece is publi
 | Repository | What it is |
 | --- | --- |
 | [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) | The dataset the fine-tune was trained on: 601,338 clips / 3,105 h of synthesized French medical speech, plus an eval-only [PARROT](https://doi.org/10.1016/j.ejrai.2025.100066) subset. |
-| [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
+| [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | The multilingual baseline the fine-tune builds on: the upstream ONNX re-quantized for int8 accuracy on long audio and graph-optimized for browser speed. |
 | [UltiMed-ASR-FR-v2-scripts](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-scripts) | The open recipe that built that dataset end to end: text sources, spoken-form normalization, the batch synthesis client, and the transcribe-and-rescore QC pass. |
 | **This repository** | The NeMo fork and training configs used for the fine-tune, documented here. |
