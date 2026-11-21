@@ -1,4 +1,9 @@
-# UltiMed-ASR-FR-v1: NeMo training scripts
+# UltiMed-ASR-FR-v2: NeMo training scripts
+
+> [!WARNING]
+> **Release in progress.** UltiMed v2 is being released right now. As long as this notice is here, files, links and numbers in this repository are still being changed.
+
+Part of [UltiMed-Org](https://github.com/UltiMed-Org), which lists every UltiMed repository, dataset and model.
 
 > [!IMPORTANT]
 > **Want faster improvements?** This project is entirely self-funded on my minimum-wage salary, and every training run competes for a single consumer GPU. If you or your organisation can donate an **RTX 5090**, or the money to buy one second-hand, it would directly speed up the next versions of the dataset and the fine-tuned models. Reach out via [olicorne.org](https://olicorne.org) or open an issue on this repository.
@@ -45,9 +50,9 @@ This fork is one piece of a French medical ASR stack; every other piece is publi
 | [Olicorne/UltiMed-ASR-FR-v1](https://huggingface.co/datasets/Olicorne/UltiMed-ASR-FR-v1) | The dataset the fine-tune was trained on: 601,338 clips / 3,105 h of synthesized French medical speech, plus an eval-only [PARROT](https://doi.org/10.1016/j.ejrai.2025.100066) subset. |
 | [Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-onnx) | The French medical fine-tune trained on that dataset, exported to ONNX (fp32 / fp16 / int8 / w4a8). |
 | [Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-optimized-onnx) | The multilingual baseline the fine-tune builds on: the upstream ONNX re-quantized for int8 accuracy on long audio and graph-optimized for browser speed. |
-| [UltiMed-ASR-FR-v1-scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts) | The open recipe that built that dataset end to end: text sources, spoken-form normalization, the batch synthesis client, and the transcribe-and-rescore QC pass. |
+| [UltiMed-ASR-FR-v2-scripts](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-scripts) | The open recipe that built that dataset end to end: text sources, spoken-form normalization, the batch synthesis client, and the transcribe-and-rescore QC pass. |
 | **This repository** | The NeMo fork and training configs used for the fine-tune, documented here. |
-| [UltiMed-ASR-FR-v1-Voxtral](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-Voxtral) | The Voxtral TTS container that spoke every clip of the dataset: Dockerfile, tuning, and the vllm-omni patches. |
+| [UltiMed-ASR-FR-v1-Voxtral](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v1-Voxtral) | The Voxtral TTS container that spoke every clip of the dataset: Dockerfile, tuning, and the vllm-omni patches. |
 | [Parakeet Web](https://github.com/thiswillbeyourgithub/parakeet_web) | The in-browser ASR app that loads either ONNX model, live at [parakeetweb.olicorne.org](https://parakeetweb.olicorne.org/). Everything runs client-side. |
 
 Upstream base model: [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), on top of [NVIDIA-NeMo/NeMo](https://github.com/NVIDIA-NeMo/NeMo).
@@ -107,9 +112,9 @@ branch tip is a working tree. Each commit message explains the why at length.
 
    French rehearsal labels are written the UltiMed way (numbers in digits: `vingt et un` -> `21`,
    `mille neuf cent quatre-vingt-dix` -> `1990`, `95 %`), using the rules of
-   [UltiMed-ASR-FR-v1-scripts](https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-scripts)
+   [UltiMed-ASR-FR-v2-scripts](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-scripts)
    imported rather than copied (`perso/ultimed_scripts.py`, added with Claude Code; only the general-French subset, the medical spelling rules misfire on Common Voice). That repo must be
-   cloned next to this one, or its path exported as `ULTIMED_SCRIPTS_DIR` in the shell that runs
+   cloned next to this one (in a folder still named `UltiMed-ASR-FR-v1-scripts`, which is the default `perso/ultimed_scripts.py` looks for), or its path exported as `ULTIMED_SCRIPTS_DIR` in the shell that runs
    `perso/prepare_commonvoice_rehearsal.py` or `perso/renormalize_manifests.py --convert-number-words fr`.
 
 8. **`train: launcher, training config and notes`** (this commit)
@@ -119,7 +124,7 @@ branch tip is a working tree. Each commit message explains the why at length.
 ## Reproducing
 
 ```bash
-git clone https://github.com/thiswillbeyourgithub/UltiMed-ASR-FR-v1-NeMo_training_scripts
+git clone https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-NeMo_training_scripts
 uv venv --python=3.10.12
 uv pip install nemo_toolkit[asr] onnx==1.18.0 numba-cuda==0.15.1 cuda-core cuda-bindings \
   cuda-pathfinder cuda-python==13.1.1 tensorboard>=2.19.0 setuptools==81.0.0 \
