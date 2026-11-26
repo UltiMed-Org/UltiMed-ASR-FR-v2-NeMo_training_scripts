@@ -2,6 +2,9 @@
 
 Part of [UltiMed-Org](https://github.com/UltiMed-Org), which lists every UltiMed repository, dataset and model.
 
+> [!WARNING]
+> **The v2 recipe documented here produced a model that is worse than v1 on real voice.** The [v2 model](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v2-onnx) does worse than the [v1 model](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-ultra-UltiMed-v1-onnx) on real human dictation (example: "la prescription venlafaxine" comes out as "la prescription devant l'accès"): it leans on the sentence templates of the training text instead of the audio. v1 and v2 trained on the same label texts (v2 only re-voiced them), so the likely cause is this recipe: peak learning rate 1e-4 instead of v1's 2e-5, and Common Voice rehearsal in French only instead of six languages. Do not reuse it as is; the [v1 recipe](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v1-NeMo_training_scripts) is the safer starting point until v3. For inference, use the v1 model plus the [v2 regex fixes](https://github.com/UltiMed-Org/UltiMed-ASR-FR-v2-regex-fixes) (the two models are drop-in replacements: same architecture, tokenizer and file layout, only the weights differ).
+
 > [!IMPORTANT]
 > **Want faster improvements?** This project is entirely self-funded on my minimum-wage salary, and every training run competes for a single consumer GPU. If you or your organisation can donate an **RTX 5090**, or the money to buy one second-hand, it would directly speed up the next versions of the dataset and the fine-tuned models. Reach out via [olicorne.org](https://olicorne.org) or open an issue on this repository.
 
